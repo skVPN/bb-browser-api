@@ -82,7 +82,8 @@ RUN pnpm install --frozen-lockfile --prod=false
 # ── 配置文件 ──────────────────────────────────────────────
 COPY docker/supervisord.conf /etc/supervisor/conf.d/bb-browser.conf
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker/start-x11vnc.sh /start-x11vnc.sh
+RUN chmod +x /entrypoint.sh /start-x11vnc.sh
 
 # ── 数据目录 ──────────────────────────────────────────────
 RUN mkdir -p /data/bb-browser /data/chrome-profile /root/.fluxbox \
