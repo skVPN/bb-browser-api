@@ -243,6 +243,20 @@ rm -rf bb-browser-api
 
 ## 常见问题
 
+### Q: 构建时报错 `turbo: not found`
+
+```bash
+# 快速修复：拉取最新代码（已包含修复）
+git pull
+docker compose restart bb-browser
+
+# 或手动修改
+sed -i 's/pnpm install --frozen-lockfile$/pnpm install --frozen-lockfile --prod=false/' docker/entrypoint.sh
+docker compose restart bb-browser
+```
+
+详见：[QUICKFIX.md](QUICKFIX.md)
+
 ### Q: docker-compose 报错 `KeyError: 'id'`
 
 A: 使用了旧版本 docker-compose v1，需要升级到 v2
