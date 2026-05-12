@@ -1,7 +1,6 @@
 #!/bin/sh
 # bb-browser 鍚姩鑴氭湰
-# 浠ｇ爜閫氳繃 volume 鎸傝浇鍒?/app锛屽惎鍔ㄦ椂鑷姩瀹夎渚濊禆骞舵瀯寤?
-set -e
+# 浠ｇ爜閫氳繃 volume 鎸傝浇鍒?/app锛屽惎鍔ㄦ椂鑷姩瀹夎渚濊禆骞舵瀯寤?set -e
 
 DAEMON_PORT="${BB_DAEMON_PORT:-18888}"
 NOVNC_PORT="${NOVNC_PORT:-6080}"
@@ -18,7 +17,7 @@ echo "================================================"
 # 鍒涘缓蹇呰鐩綍
 mkdir -p /data/bb-browser /data/chrome-profile /root/.fluxbox
 
-# 鈹€鈹€ 鏋勫缓椤圭洰锛堜緷璧栧凡鍦ㄩ暅鍍忎腑瀹夎锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# 鈹€鈹€ 鏋勫缓椤圭洰锛堜緷璧栧凡鍦ㄩ暅鍍忎腑瀹夎锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 cd /app
 
 if [ ! -f "package.json" ]; then
@@ -39,4 +38,20 @@ if [ ! -f "dist/daemon.js" ]; then
 fi
 
 echo "[startup] 鍚姩鎵€鏈夋湇鍔?.."
+
+# 鈹€鈹€ 淇 supervisord 閰嶇疆鏂囦欢鎹㈣绗︼紙闃叉 Windows CRLF 闂锛夆攢鈹€
+CONF_FILE="/etc/supervisor/conf.d/bb-browser.conf"
+if [ -f "$CONF_FILE" ]; then
+    # 妫€鏌ユ槸鍚︽湁 CRLF 鎹㈣绗?    if file "$CONF_FILE" 2>/dev/null | grep -q "CRLF"; then
+        echo "[startup] 鈿狅笍  妫€娴嬪埌 CRLF 鎹㈣绗︼紝鑷姩杞崲涓?LF..."
+        sed -i 's/\r$//' "$CONF_FILE"
+        echo "[startup] 鉁?鎹㈣绗﹁浆鎹㈠畬鎴?
+    else
+        echo "[startup] 鉁?閰嶇疆鏂囦欢鎹㈣绗︽甯?
+    fi
+else
+    echo "[startup] 鉂?閰嶇疆鏂囦欢涓嶅瓨鍦? $CONF_FILE"
+    exit 1
+fi
+
 exec supervisord -c /etc/supervisor/supervisord.conf

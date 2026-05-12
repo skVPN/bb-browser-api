@@ -1,76 +1,69 @@
 #!/bin/bash
-# 快速修复并重新部署脚本
+# 蹇€熶慨澶嶅苟閲嶆柊閮ㄧ讲鑴氭湰
 
 set -e
 
 echo "=========================================="
-echo "bb-browser 快速修复和重新部署"
+echo "bb-browser 蹇€熶慨澶嶅拰閲嶆柊閮ㄧ讲"
 echo "=========================================="
 echo
 
-# 1. 拉取最新代码
-echo "1️⃣  拉取最新代码..."
+# 1. 鎷夊彇鏈€鏂颁唬鐮?echo "1锔忊儯  鎷夊彇鏈€鏂颁唬鐮?.."
 git pull
 
-# 2. 转换换行符（防止 Windows 编辑器修改）
+# 2. 杞崲鎹㈣绗︼紙闃叉 Windows 缂栬緫鍣ㄤ慨鏀癸級
 echo
-echo "2️⃣  转换换行符为 LF..."
+echo "2锔忊儯  杞崲鎹㈣绗︿负 LF..."
 if command -v dos2unix &> /dev/null; then
     dos2unix docker/supervisord.conf docker/entrypoint.sh docker/start-x11vnc.sh
-    echo "✅ 使用 dos2unix 转换完成"
+    echo "鉁?浣跨敤 dos2unix 杞崲瀹屾垚"
 else
-    # 使用 sed 转换
+    # 浣跨敤 sed 杞崲
     sed -i 's/\r$//' docker/supervisord.conf docker/entrypoint.sh docker/start-x11vnc.sh
-    echo "✅ 使用 sed 转换完成"
+    echo "鉁?浣跨敤 sed 杞崲瀹屾垚"
 fi
 
-# 3. 验证配置文件
+# 3. 楠岃瘉閰嶇疆鏂囦欢
 echo
-echo "3️⃣  验证配置文件..."
+echo "3锔忊儯  楠岃瘉閰嶇疆鏂囦欢..."
 if command -v python3 &> /dev/null; then
     python3 validate-supervisord-strict.py docker/supervisord.conf
 elif command -v python &> /dev/null; then
     python validate-supervisord-strict.py docker/supervisord.conf
 else
-    echo "⚠️  未找到 Python，跳过验证"
+    echo "鈿狅笍  鏈壘鍒?Python锛岃烦杩囬獙璇?
 fi
 
-# 4. 停止容器
+# 4. 閲嶅惎瀹瑰櫒锛堥厤缃枃浠堕€氳繃 volume 鎸傝浇锛屼笉闇€瑕侀噸鏂版瀯寤猴級
 echo
-echo "4️⃣  停止容器..."
-docker compose down
+echo "4锔忊儯  閲嶅惎瀹瑰櫒..."
+docker compose restart bb-browser
 
-# 5. 重新构建镜像
+# 5. 绛夊緟鏈嶅姟鍚姩
 echo
-echo "5️⃣  重新构建镜像..."
-docker compose build --no-cache
-
-# 6. 启动容器
-echo
-echo "6️⃣  启动容器..."
-docker compose up -d
-
-# 7. 等待服务启动
-echo
-echo "7️⃣  等待服务启动（30秒）..."
+echo "5锔忊儯  绛夊緟鏈嶅姟鍚姩锛?0绉掞級..."
 sleep 30
 
-# 8. 检查服务状态
-echo
-echo "8️⃣  检查服务状态..."
+# 6. 妫€鏌ユ湇鍔＄姸鎬?echo
+echo "6锔忊儯  妫€鏌ユ湇鍔＄姸鎬?.."
 docker compose logs --tail=50 bb-browser
 
 echo
 echo "=========================================="
-echo "部署完成"
+echo "閮ㄧ讲瀹屾垚"
 echo "=========================================="
 echo
-echo "📊 检查服务状态："
+echo "馃搳 妫€鏌ユ湇鍔＄姸鎬侊細"
 echo "   docker compose exec bb-browser supervisorctl status"
 echo
-echo "📝 查看日志："
+echo "馃摑 鏌ョ湅鏃ュ織锛?
 echo "   docker compose logs -f bb-browser"
 echo
-echo "🌐 访问服务："
+echo "馃寪 璁块棶鏈嶅姟锛?
 echo "   noVNC: http://$(hostname -I | awk '{print $1}'):6080/vnc.html"
 echo "   API:   http://$(hostname -I | awk '{print $1}'):18888"
+echo
+echo "馃挕 鎻愮ず锛?
+echo "   閰嶇疆鏂囦欢宸查€氳繃 volume 鎸傝浇锛屼慨鏀瑰悗鍙渶 restart 鍗冲彲鐢熸晥"
+echo "   docker compose restart bb-browser"
+

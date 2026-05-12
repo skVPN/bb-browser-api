@@ -36,6 +36,8 @@ services:
       - /app/packages/cli/node_modules
       - /app/packages/daemon/node_modules
       - /app/packages/mcp/node_modules
+      # ★ supervisord 配置文件挂载（改配置不需要重新 build 镜像）
+      - ./docker/supervisord.conf:/etc/supervisor/conf.d/bb-browser.conf:ro
       # 持久化数据
       - chrome-profile:/data/chrome-profile
       - bb-browser-data:/data/bb-browser

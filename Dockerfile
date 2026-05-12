@@ -80,7 +80,8 @@ COPY packages/mcp/package.json ./packages/mcp/
 RUN pnpm install --frozen-lockfile --prod=false
 
 # ── 配置文件 ──────────────────────────────────────────────
-COPY docker/supervisord.conf /etc/supervisor/conf.d/bb-browser.conf
+# supervisord.conf 通过 volume 挂载，方便修改
+# 只复制启动脚本到镜像
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/start-x11vnc.sh /start-x11vnc.sh
 RUN chmod +x /entrypoint.sh /start-x11vnc.sh

@@ -7,6 +7,10 @@ Error: Source contains parsing errors: '/etc/supervisor/conf.d/bb-browser.conf'
   [line 62]: '"\n'
 ```
 
+## ✨ 新方案：配置文件通过 volume 挂载
+
+从现在开始，`supervisord.conf` 通过 volume 挂载，**修改配置后只需 restart，不需要重新构建镜像**。
+
 ## 在服务器上执行以下命令
 
 ### 方法 1：一键修复（推荐）
@@ -21,10 +25,7 @@ bash fix-and-redeploy.sh
 1. ✅ 拉取最新代码
 2. ✅ 转换换行符为 LF
 3. ✅ 验证配置文件
-4. ✅ 停止容器
-5. ✅ 重新构建镜像（使用 --no-cache）
-6. ✅ 启动容器
-7. ✅ 显示服务状态
+4. ✅ 重启容器（不需要重新构建）
 
 ### 方法 2：手动修复
 
@@ -38,14 +39,26 @@ dos2unix docker/supervisord.conf docker/entrypoint.sh docker/start-x11vnc.sh
 # 如果没有 dos2unix，使用 sed：
 # sed -i 's/\r$//' docker/supervisord.conf docker/entrypoint.sh docker/start-x11vnc.sh
 
-# 3. 重新构建并启动
-docker compose down
-docker compose build --no-cache
-docker compose up -d
+# 3. 重启容器（配置文件会自动重新挂载）
+docker compose restart bb-browser
 
 # 4. 查看日志
 docker compose logs -f bb-browser
 ```
+
+## 🎯 配置文件修改流程（新）
+
+以后修改 `docker/supervisord.conf` 后：
+
+```bash
+# 1. 转换换行符（如果在 Windows 上编辑）
+sed -i 's/\r$//' docker/supervisord.conf
+
+# 2. 重启容器即可生效
+docker compose restart bb-browser
+```
+
+**不需要重新构建镜像！**
 
 ## 验证服务
 
