@@ -11,8 +11,8 @@ services:
     restart: unless-stopped
 
     ports:
-      - "6080:6080"    # noVNC 网页访问入口 → 打开 http://localhost:6080/vnc.html
-      - "5900:5900"    # 原生 VNC 客户端（可选，用 VNC Viewer 连接）
+      - "6080:6080"    # noVNC 网页访问
+      - "5900:5900"    # 原生 VNC（可选）
       - "18888:18888"  # bb-browser HTTP API
 
     environment:
@@ -28,7 +28,11 @@ services:
       VNC_PASSWORD: "changeme"
 
     volumes:
-      # 持久化 Chrome 用户数据（保留 Cookie、登录态）
+      # ★ 代码挂载（改代码不需要重新 build 镜像）
+      - ./:/app
+      # node_modules 用 volume（避免宿主机和容器的 node_modules 冲突）
+      - node_modules:/app/node_modules
+      # 持久化数据
       - chrome-profile:/data/chrome-profile
       - bb-browser-data:/data/bb-browser
 
@@ -43,9 +47,10 @@ services:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:6080"]
       interval: 15s
       timeout: 5s
-      start_period: 40s
+      start_period: 60s
       retries: 3
 
 volumes:
+  node_modules:      # 容器内的 node_modules，避免和宿主机冲突
   chrome-profile:
   bb-browser-data:
