@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # 基础工具
     curl ca-certificates tini \
     # 虚拟显示 + VNC
-    xvfb x11vnc novnc websockify \
+    xvfb x11vnc novnc websockify x11-utils \
     # 窗口管理器（Chrome 渲染需要）
     fluxbox \
     # Chromium
@@ -52,6 +52,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     # 进程管理
     supervisor \
+    # 网络工具（用于调试）
+    net-tools procps \
     && \
     # 安装 Node.js（setup 脚本内部会 apt-get update，所以放在同一层末尾）
     curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - && \

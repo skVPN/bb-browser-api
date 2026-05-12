@@ -1,0 +1,63 @@
+# 使用 Cloudflare Tunnel 提供 HTTPS 访问
+# 无需配置 SSL 证书，自动获得 HTTPS
+
+version: "3.9"
+
+services:
+
+  bb-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bb-browser:latest
+    container_name: bb-browser
+    restart: unless-stopped
+
+    # 不需要暴露端口到宿主机
+    expose:
+      - "6080"
+      - "18888"
+
+    environment:
+      DISPLAY_NUM: "99"
+      SCREEN_WIDTH: "1280"
+      SCREEN_HEIGHT: "900"
+      BB_DAEMON_PORT: "18888"
+      BB_CDP_PORT: "9222"
+      VNC_PORT: "5900"
+      NOVNC_PORT: "6080"
+      BB_BROWSER_HOME: /data/bb-browser
+      VNC_PASSWORD: "changeme"
+
+    volumes:
+      - ./:/app
+      - /app/node_modules
+      - /app/packages/shared/node_modules
+      - /app/packages/cli/node_modules
+      - /app/packages/daemon/node_modules
+      - /app/packages/mcp/node_modules
+      - ./docker/supervisord.conf:/etc/supervisor/conf.d/bb-browser.conf:ro
+      - chrome-profile:/data/chrome-profile
+      - bb-browser-data:/data/bb-browser
+
+    shm_size: "512mb"
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+
+  # Cloudflare Tunnel
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # 从 Cloudflare Zero Trust 获取
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - bb-browser
+
+volumes:
+  chrome-profile:
+  bb-browser-data:
