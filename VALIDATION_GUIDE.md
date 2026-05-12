@@ -1,288 +1,207 @@
-# supervisord.conf 本地验证指南
+# supervisord 配置文件校验指南
 
-## 问题
+## 问题背景
 
-服务器上报错：
+在 Windows 上编辑的配置文件默认使用 CRLF（`\r\n`）换行符，但 Docker 容器内的 Linux 环境需要 LF（`\n`）换行符。这会导致 supervisord 解析错误：
+
 ```
 Error: Source contains parsing errors: '/etc/supervisor/conf.d/bb-browser.conf'
   [line 62]: '"\n'
 ```
 
-## 根本原因
+## 解决方案
 
-supervisord 的 `environment` 字段**不应该包含引号**。
+### 1. 本地校验工具
 
-### 错误示例
-
-```ini
-environment=DISPLAY=":99"                      # ❌ 错误
-environment=BB_BROWSER_HOME="/data/bb-browser" # ❌ 错误
-```
-
-### 正确示例
-
-```ini
-environment=DISPLAY=:99                        # ✅ 正确
-environment=BB_BROWSER_HOME=/data/bb-browser   # ✅ 正确
-```
-
----
-
-## 本地验证方法
-
-### 方法 1：使用 Python 验证脚本（推荐）
+使用 `validate-supervisord-strict.py` 校验配置文件：
 
 ```bash
-# 在项目根目录运行
-python validate-supervisord-strict.py
-```
-
-**输出示例**：
-```
-严格验证配置文件: docker/supervisord.conf
-============================================================
-第 1 行: [supervisord]
-第 8 行: [program:xvfb]
-第 20 行: [program:fluxbox]
-第 33 行: [program:x11vnc]
-第 45 行: [program:novnc]
-第 57 行: [program:chromium]
-第 70 行: [program:bb-daemon]
-
-✅ 配置文件验证通过！
-```
-
-### 方法 2：检查引号
-
-```bash
-# Windows PowerShell
-Get-Content docker\supervisord.conf | Select-String -Pattern '"'
-
-# Linux/Mac
-grep '"' docker/supervisord.conf
-```
-
-**应该没有输出**（或只在注释中有引号）
-
-### 方法 3：检查 environment 字段
-
-```bash
-# Windows PowerShell
-Get-Content docker\supervisord.conf | Select-String -Pattern 'environment='
-
-# Linux/Mac
-grep 'environment=' docker/supervisord.conf
-```
-
-**正确输出**：
-```
-environment=DISPLAY=:99
-environment=DISPLAY=:99
-environment=BB_BROWSER_HOME=/data/bb-browser
-```
-
-**错误输出**（有引号）：
-```
-environment=DISPLAY=":99"
-environment=BB_BROWSER_HOME="/data/bb-browser"
-```
-
----
-
-## 验证脚本说明
-
-### validate-supervisord-strict.py
-
-**功能**：
-- ✅ 检查 `environment` 字段是否有引号
-- ✅ 检查 `command` 字段是否有未闭合的引号
-- ✅ 警告复杂的 shell 脚本（建议使用独立脚本）
-- ✅ 显示所有 section 和行号
-
-**使用**：
-```bash
-python validate-supervisord-strict.py [配置文件路径]
-```
-
-**示例**：
-```bash
-# 验证默认配置
-python validate-supervisord-strict.py
-
-# 验证指定文件
 python validate-supervisord-strict.py docker/supervisord.conf
 ```
 
----
+**检查项：**
+- ✅ 语法解析（使用 Python configparser）
+- ✅ environment 字段不能有引号
+- ✅ command 字段必须在一行
+- ✅ 必需字段检查
+- ✅ 环境变量引用格式检查
+
+### 2. 转换换行符
+
+**Windows PowerShell：**
+
+```powershell
+# 转换单个文件
+$content = Get-Content docker/supervisord.conf -Raw
+$content = $content.Replace("`r`n", "`n")
+[System.IO.File]::WriteAllText("docker/supervisord.conf", $content, [System.Text.UTF8Encoding]::new($false))
+
+# 批量转换所有 Docker 配置文件
+$files = @('docker/supervisord.conf', 'docker/entrypoint.sh', 'docker/start-x11vnc.sh')
+foreach ($file in $files) {
+    $content = Get-Content $file -Raw
+    $content = $content.Replace("`r`n", "`n")
+    [System.IO.File]::WriteAllText($file, $content, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "✅ $file"
+}
+```
+
+**Linux/macOS：**
+
+```bash
+# 使用 dos2unix（需要安装）
+dos2unix docker/supervisord.conf docker/entrypoint.sh docker/start-x11vnc.sh
+
+# 或使用 sed
+sed -i 's/\r$//' docker/supervisord.conf
+```
+
+### 3. 验证转换结果
+
+**检查文件是否为 LF：**
+
+```powershell
+# Windows PowerShell
+Get-Content docker/supervisord.conf -Raw | Format-Hex | Select-Object -Last 3
+# 应该只看到 0A，没有 0D 0A
+```
+
+```bash
+# Linux/macOS
+file docker/supervisord.conf
+# 应该显示：ASCII text
+# 如果是 CRLF 会显示：ASCII text, with CRLF line terminators
+```
 
 ## supervisord 配置规则
 
-### 1. environment 字段
-
-**格式**：`environment=KEY1=VALUE1,KEY2=VALUE2`
-
-**规则**：
-- ❌ 不要使用引号包裹值
-- ❌ 不要使用引号包裹整个字段
-- ✅ 多个环境变量用逗号分隔
-- ✅ 值中如果有空格，使用 `%(ENV_VAR)s` 引用环境变量
-
-**示例**：
-```ini
-# 单个环境变量
-environment=DISPLAY=:99
-
-# 多个环境变量
-environment=DISPLAY=:99,PATH=/usr/bin:/bin
-
-# 引用环境变量
-environment=DISPLAY=:%(ENV_DISPLAY_NUM)s
-```
-
-### 2. command 字段
-
-**规则**：
-- ✅ 所有参数放在一行
-- ❌ 不要使用多行格式
-- ❌ 避免复杂的 shell 脚本
-- ✅ 复杂逻辑使用独立脚本
-
-**错误示例**：
-```ini
-command=chromium
-    --no-sandbox
-    --disable-dev-shm-usage
-```
-
-**正确示例**：
-```ini
-command=chromium --no-sandbox --disable-dev-shm-usage
-```
-
-**复杂脚本（不推荐）**：
-```ini
-command=/bin/sh -c "if [ -n \"$VAR\" ]; then echo \"test\"; fi"
-```
-
-**使用独立脚本（推荐）**：
-```ini
-command=/bin/sh /start-script.sh
-```
-
-### 3. 引号使用
-
-**规则**：
-- ✅ `command` 中的 shell 脚本可以使用引号
-- ❌ `environment` 字段不要使用引号
-- ✅ 路径中有空格时使用引号（但尽量避免空格）
-
----
-
-## 常见错误
-
-### 错误 1：environment 有引号
+### ✅ 正确写法
 
 ```ini
-environment=BB_BROWSER_HOME="/data/bb-browser"
+[program:example]
+command=chromium --no-sandbox --remote-debugging-port=9222
+environment=DISPLAY=:99,NODE_ENV=production
 ```
 
-**错误信息**：
-```
-Error: Source contains parsing errors
-  [line XX]: '"\n'
-```
-
-**修复**：
-```ini
-environment=BB_BROWSER_HOME=/data/bb-browser
-```
-
-### 错误 2：多行 command
+### ❌ 错误写法
 
 ```ini
-command=chromium
-    --no-sandbox
+[program:example]
+# ❌ environment 不能有引号
+environment="DISPLAY=:99"
+
+# ❌ command 不能跨行
+command=chromium \
+    --no-sandbox \
+    --remote-debugging-port=9222
 ```
 
-**错误信息**：
-```
-Error: Source contains parsing errors
-```
+### 复杂逻辑使用独立脚本
 
-**修复**：
-```ini
-command=chromium --no-sandbox
-```
-
-### 错误 3：复杂 shell 脚本
+如果需要条件判断或复杂逻辑，使用独立脚本：
 
 ```ini
-command=/bin/sh -c "if [ -n \"$VNC_PASSWORD\" ]; then x11vnc ...; fi"
-```
-
-**问题**：引号嵌套复杂，容易出错
-
-**修复**：使用独立脚本
-```ini
+[program:x11vnc]
 command=/bin/sh /start-x11vnc.sh
 ```
 
----
+```bash
+#!/bin/sh
+# /start-x11vnc.sh
+if [ -n "$VNC_PASSWORD" ]; then
+    x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass
+    exec x11vnc -rfbauth /tmp/vncpass -display ":${DISPLAY_NUM}"
+else
+    exec x11vnc -nopw -display ":${DISPLAY_NUM}"
+fi
+```
 
-## 验证流程
+## 部署流程
 
-### 1. 修改配置文件后
+1. **本地校验**
 
 ```bash
-# 1. 本地验证
-python validate-supervisord-strict.py
+python validate-supervisord-strict.py docker/supervisord.conf
+```
 
-# 2. 检查引号
-grep '"' docker/supervisord.conf
+2. **提交代码**
 
-# 3. 提交代码
-git add docker/supervisord.conf
-git commit -m "修复: supervisord 配置"
+```bash
+git add docker/supervisord.conf docker/entrypoint.sh docker/start-x11vnc.sh
+git commit -m "fix(docker): 修复 supervisord 配置文件换行符问题"
 git push
+```
 
-# 4. 服务器上测试
-cd /home/ecs-user/bb-browser-api
+3. **服务器部署**
+
+```bash
+cd /path/to/bb-browser
 git pull
 docker compose build
 docker compose up -d
-docker compose logs -f bb-browser
 ```
 
-### 2. 如果还有错误
+4. **验证服务**
 
 ```bash
-# 查看具体错误行
-docker compose logs bb-browser | grep "line"
+# 查看容器日志
+docker compose logs -f bb-browser
 
-# 进入容器检查
-docker compose exec bb-browser cat /etc/supervisor/conf.d/bb-browser.conf
+# 检查服务状态
+docker compose exec bb-browser supervisorctl status
 
-# 手动测试配置
-docker compose exec bb-browser supervisord -c /etc/supervisor/supervisord.conf -n
+# 应该看到 6 个服务都是 RUNNING：
+# xvfb                             RUNNING   pid 123, uptime 0:01:00
+# fluxbox                          RUNNING   pid 124, uptime 0:01:00
+# x11vnc                           RUNNING   pid 125, uptime 0:01:00
+# novnc                            RUNNING   pid 126, uptime 0:01:00
+# chromium                         RUNNING   pid 127, uptime 0:01:00
+# bb-daemon                        RUNNING   pid 128, uptime 0:01:00
 ```
 
----
+5. **测试访问**
 
-## 总结
+- noVNC 网页：http://your-server:6080/vnc.html
+- API 接口：http://your-server:18888
 
-| 问题 | 原因 | 解决方案 |
-|------|------|----------|
-| `[line XX]: '"\n'` | environment 有引号 | 移除引号 |
-| 多行命令错误 | command 换行 | 合并为一行 |
-| 引号嵌套错误 | shell 脚本复杂 | 使用独立脚本 |
+## 常见问题
 
-**验证工具**：
-- ✅ `validate-supervisord-strict.py` - 严格验证
-- ✅ `grep '"' docker/supervisord.conf` - 检查引号
-- ✅ `grep 'environment=' docker/supervisord.conf` - 检查 environment
+### Q: 为什么本地校验通过，但 Docker 内还是报错？
 
-**最佳实践**：
-- ✅ 修改配置后立即本地验证
-- ✅ 使用独立脚本处理复杂逻辑
-- ✅ environment 字段不使用引号
-- ✅ command 字段所有参数放一行
+A: 可能是换行符问题。Windows 编辑器默认使用 CRLF，需要转换为 LF。
+
+### Q: 如何防止 Git 自动转换换行符？
+
+A: 在 `.gitattributes` 中添加：
+
+```
+docker/supervisord.conf text eol=lf
+docker/*.sh text eol=lf
+```
+
+### Q: 如何在 VS Code 中设置换行符？
+
+A: 
+1. 打开文件
+2. 点击右下角的 "CRLF" 或 "LF"
+3. 选择 "LF"
+4. 保存文件
+
+或在 `.vscode/settings.json` 中添加：
+
+```json
+{
+  "files.eol": "\n",
+  "[shellscript]": {
+    "files.eol": "\n"
+  },
+  "[properties]": {
+    "files.eol": "\n"
+  }
+}
+```
+
+## 参考资料
+
+- [Supervisor Configuration File](http://supervisord.org/configuration.html)
+- [Unix vs Windows Line Endings](https://www.aleksandrhovhannisyan.com/blog/crlf-vs-lf-normalizing-line-endings-in-git/)

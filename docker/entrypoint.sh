@@ -1,7 +1,6 @@
 #!/bin/sh
-# bb-browser 启动脚本
-# 代码通过 volume 挂载到 /app，启动时自动安装依赖并构建
-
+# bb-browser 鍚姩鑴氭湰
+# 浠ｇ爜閫氳繃 volume 鎸傝浇鍒?/app锛屽惎鍔ㄦ椂鑷姩瀹夎渚濊禆骞舵瀯寤?
 set -e
 
 DAEMON_PORT="${BB_DAEMON_PORT:-18888}"
@@ -11,33 +10,33 @@ DISPLAY_NUM="${DISPLAY_NUM:-99}"
 export DISPLAY=":${DISPLAY_NUM}"
 
 echo "================================================"
-echo " bb-browser 启动"
-echo " noVNC 网页: http://<host>:${NOVNC_PORT}/vnc.html"
+echo " bb-browser 鍚姩"
+echo " noVNC 缃戦〉: http://<host>:${NOVNC_PORT}/vnc.html"
 echo " API:        http://<host>:${DAEMON_PORT}"
 echo "================================================"
 
-# 创建必要目录
+# 鍒涘缓蹇呰鐩綍
 mkdir -p /data/bb-browser /data/chrome-profile /root/.fluxbox
 
-# ── 构建项目（依赖已在镜像中安装）─────────────────────
+# 鈹€鈹€ 鏋勫缓椤圭洰锛堜緷璧栧凡鍦ㄩ暅鍍忎腑瀹夎锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 cd /app
 
 if [ ! -f "package.json" ]; then
-    echo "[ERROR] /app/package.json 不存在，请确认代码已挂载到 /app"
+    echo "[ERROR] /app/package.json 涓嶅瓨鍦紝璇风‘璁や唬鐮佸凡鎸傝浇鍒?/app"
     exit 1
 fi
 
-# 检查依赖是否需要更新（package.json 有变化）
+# 妫€鏌ヤ緷璧栨槸鍚﹂渶瑕佹洿鏂帮紙package.json 鏈夊彉鍖栵級
 if [ "package.json" -nt "/app/node_modules/.modules.yaml" ] 2>/dev/null; then
-    echo "[startup] 检测到依赖变化，重新安装..."
+    echo "[startup] 妫€娴嬪埌渚濊禆鍙樺寲锛岄噸鏂板畨瑁?.."
     pnpm install --frozen-lockfile --prod=false
 fi
 
-# dist 不存在或源码有更新时重新构建
+# dist 涓嶅瓨鍦ㄦ垨婧愮爜鏈夋洿鏂版椂閲嶆柊鏋勫缓
 if [ ! -f "dist/daemon.js" ]; then
-    echo "[startup] 构建项目..."
+    echo "[startup] 鏋勫缓椤圭洰..."
     pnpm build
 fi
 
-echo "[startup] 启动所有服务..."
+echo "[startup] 鍚姩鎵€鏈夋湇鍔?.."
 exec supervisord -c /etc/supervisor/supervisord.conf

@@ -1,0 +1,12 @@
+# 强制 Docker 相关文件使用 LF 换行符
+docker/supervisord.conf text eol=lf
+docker/*.sh text eol=lf
+*.sh text eol=lf
+
+# 其他文本文件使用 LF
+*.md text eol=lf
+*.json text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
