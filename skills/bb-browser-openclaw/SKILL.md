@@ -1,12 +1,12 @@
 ---
 name: bb-browser-openclaw
-description: Turn any website into a CLI command. 36 platforms, 103 commands â€” Twitter, Reddit, GitHub, YouTube, Zhihu, Bilibili, Weibo, and more. Uses OpenClaw's browser directly, no extra extension needed.
+description: Turn any website into a CLI command. 36 platforms, 103 commands â€?Twitter, Reddit, GitHub, YouTube, Zhihu, Bilibili, Weibo, and more. Uses OpenClaw's browser directly, no extra extension needed.
 requires:
   bins: bb-browser
 allowed-tools: Bash(bb-browser:*)
 ---
 
-# bb-browser sites â€” The web as CLI
+# bb-browser sites â€?The web as CLI
 
 36 platforms, 103 commands. One-liner structured data from any website using your login state.
 

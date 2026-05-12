@@ -1,4 +1,4 @@
-# Privacy Policy â€” bb-browser
+# Privacy Policy â€?bb-browser
 
 **Last updated:** 2026-03-14
 
@@ -11,7 +11,7 @@ bb-browser is a browser automation tool that lets AI agents control your Chrome 
 All communication happens **locally on your machine**:
 
 ```
-AI Agent â†” CLI/MCP â†” localhost:19824 (daemon) â†” Chrome Extension
+AI Agent â†?CLI/MCP â†?localhost:19824 (daemon) â†?Chrome Extension
 ```
 
 **No data is sent to any external server.** There is no telemetry, no analytics, no cloud service.

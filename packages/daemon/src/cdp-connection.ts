@@ -542,6 +542,12 @@ export class CdpConnection {
       throw new Error(`Tab not found: ${tabRef}`);
     }
 
+    // 如果没有指定 tab，优先选择非 about:blank 的页面
+    if (!target) {
+      target = targets.find((t) => t.url && !t.url.startsWith("about:") && !t.url.startsWith("chrome:"));
+    }
+    
+    // 如果还是没有，使用第一个
     target ??= targets[0];
     this.currentTargetId = target.id;
     await this.attachAndEnable(target.id);

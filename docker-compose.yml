@@ -1,0 +1,86 @@
+version: "3.9"
+
+# ============================================================
+# bb-browser docker-compose 部署
+# ============================================================
+
+services:
+
+  # ── bb-browser daemon（含内置 Chromium）──────────────────
+  bb-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_VERSION: "20"
+        DAEMON_PORT: "18888"
+        CDP_PORT: "9222"
+    image: bb-browser:latest
+    container_name: bb-browser
+    restart: unless-stopped
+
+    ports:
+      # 对外暴露 daemon HTTP API
+      - "18888:18888"
+      # 如需从宿主机直接访问 CDP（调试用），取消注释：
+      # - "9222:9222"
+
+    environment:
+      BB_DAEMON_PORT: "18888"
+      BB_CDP_PORT: "9222"
+      BB_BROWSER_HOME: /data/bb-browser
+      # CDP 等待超时（秒）
+      CDP_TIMEOUT: "30"
+
+    volumes:
+      # 持久化 Chrome 用户数据（保留 Cookie、登录态）
+      - chrome-profile:/data/chrome-profile
+      # 持久化 bb-browser 配置
+      - bb-browser-data:/data/bb-browser
+
+    # Chromium 无头模式需要 /dev/shm 足够大
+    shm_size: "256mb"
+
+    # 安全配置：Chromium 需要这些能力
+    cap_add:
+      - SYS_ADMIN   # 允许 Chrome sandbox（或用 --no-sandbox 替代）
+    security_opt:
+      - seccomp:unconfined  # 允许 Chrome 的 syscall
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18888/status"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── 可选：你的 Python 业务服务 ────────────────────────────
+  # 如果你有独立的 Python 应用，取消注释并修改
+  #
+  # app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   image: bb-browser:latest
+  #   container_name: bb-app
+  #   restart: unless-stopped
+  #   command: python /app/your_script.py
+  #   depends_on:
+  #     bb-browser:
+  #       condition: service_healthy
+  #   environment:
+  #     BB_DAEMON_URL: "http://bb-browser:18888"
+  #   volumes:
+  #     - ./your_app:/app/your_app
+
+volumes:
+  chrome-profile:
+    driver: local
+  bb-browser-data:
+    driver: local

@@ -98,8 +98,12 @@ Endpoints:
   }
 
   // Auto-generate token if not provided
+  // 本地开发模式：如果绑定到 127.0.0.1，默认不使用 token
   let token = values.token ?? "";
-  if (!token) {
+  const host = values.host ?? DAEMON_HOST;
+  
+  if (!token && host !== "127.0.0.1" && host !== "localhost") {
+    // 只有在非本地地址时才自动生成 token
     token = randomBytes(16).toString("hex");
   }
 
