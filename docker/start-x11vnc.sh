@@ -1,27 +1,28 @@
 #!/bin/sh
-# x11vnc 鍚姩鑴氭湰
-# 鏍规嵁 VNC_PASSWORD 鐜鍙橀噺鍐冲畾鏄惁闇€瑕佸瘑鐮?
+# x11vnc startup script
+# Decides whether to use password based on VNC_PASSWORD environment variable
+
 set -e
 
-# 绛夊緟 Xvfb 鍚姩
-echo "[x11vnc] 绛夊緟 Xvfb 鍚姩..."
+# Wait for Xvfb to start
+echo "[x11vnc] Waiting for Xvfb to start..."
 sleep 2
 
-# 妫€鏌?DISPLAY 鏄惁鍙敤
+# Check if DISPLAY is available
 if ! xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1; then
-    echo "[x11vnc] 閿欒: DISPLAY :${DISPLAY_NUM} 涓嶅彲鐢?
-    echo "[x11vnc] 绛夊緟 5 绉掑悗閲嶈瘯..."
+    echo "[x11vnc] ERROR: DISPLAY :${DISPLAY_NUM} is not available"
+    echo "[x11vnc] Waiting 5 seconds and retrying..."
     sleep 5
     if ! xdpyinfo -display ":${DISPLAY_NUM}" >/dev/null 2>&1; then
-        echo "[x11vnc] 閿欒: DISPLAY 浠嶇劧涓嶅彲鐢紝閫€鍑?
+        echo "[x11vnc] ERROR: DISPLAY still not available, exiting"
         exit 1
     fi
 fi
 
-echo "[x11vnc] DISPLAY :${DISPLAY_NUM} 宸插氨缁?
+echo "[x11vnc] DISPLAY :${DISPLAY_NUM} is ready"
 
 if [ -n "$VNC_PASSWORD" ]; then
-    echo "[x11vnc] 浣跨敤瀵嗙爜淇濇姢"
+    echo "[x11vnc] Using password protection"
     x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpass
     exec x11vnc \
         -display ":${DISPLAY_NUM}" \
@@ -33,7 +34,7 @@ if [ -n "$VNC_PASSWORD" ]; then
         -wait 5 \
         -nap
 else
-    echo "[x11vnc] 涓嶄娇鐢ㄥ瘑鐮?
+    echo "[x11vnc] Not using password"
     exec x11vnc \
         -display ":${DISPLAY_NUM}" \
         -forever \
