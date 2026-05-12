@@ -2,7 +2,7 @@
 .git
 .gitignore
 
-# Node
+# Node（构建时需要安装，所以排除）
 node_modules
 packages/*/node_modules
 packages/*/dist
@@ -11,7 +11,7 @@ packages/*/dist
 .turbo
 dist
 
-# 测试和文档
+# 测试和文档（不需要复制到镜像）
 test/
 docs/
 examples/
@@ -22,7 +22,6 @@ examples/
 .husky
 eslint.config.mjs
 *.bat
-*.sh
 diagnose.*
 verify-*
 quick-test.*
@@ -41,3 +40,8 @@ __pycache__
 *.pyo
 .venv
 venv/
+
+# Docker 相关（避免递归复制）
+Dockerfile*
+docker-compose*.yml
+.dockerignore

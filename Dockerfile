@@ -63,6 +63,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── 安装 pnpm ─────────────────────────────────────────────
 RUN npm install -g pnpm@9.15.0 --registry=https://registry.npmmirror.com
 
+# ── 代码目录（由 volume 挂载）────────────────────────────
+WORKDIR /app
+
+# ── 预安装依赖（利用 Docker 缓存）────────────────────────
+# 只复制 package.json 和 lock 文件，利用 Docker 层缓存
+# 这样只有依赖变化时才重新安装，代码变化不影响这一层
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY turbo.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/cli/package.json ./packages/cli/
+COPY packages/daemon/package.json ./packages/daemon/
+COPY packages/mcp/package.json ./packages/mcp/
+
+# 安装所有依赖（包括 devDependencies，用于构建）
+RUN pnpm install --frozen-lockfile --prod=false
+
 # ── 配置文件 ──────────────────────────────────────────────
 COPY docker/supervisord.conf /etc/supervisor/conf.d/bb-browser.conf
 COPY docker/entrypoint.sh /entrypoint.sh
@@ -71,9 +87,6 @@ RUN chmod +x /entrypoint.sh
 # ── 数据目录 ──────────────────────────────────────────────
 RUN mkdir -p /data/bb-browser /data/chrome-profile /root/.fluxbox \
     && echo "session.screen0.toolbar.visible: false" > /root/.fluxbox/init
-
-# ── 代码目录（由 volume 挂载）────────────────────────────
-WORKDIR /app
 
 # ── 暴露端口 ──────────────────────────────────────────────
 EXPOSE ${NOVNC_PORT} ${VNC_PORT} ${DAEMON_PORT}

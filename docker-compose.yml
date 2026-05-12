@@ -30,8 +30,12 @@ services:
     volumes:
       # ★ 代码挂载（改代码不需要重新 build 镜像）
       - ./:/app
-      # node_modules 用 volume（避免宿主机和容器的 node_modules 冲突）
-      - node_modules:/app/node_modules
+      # ★ node_modules 使用镜像中预安装的（不被宿主机覆盖）
+      - /app/node_modules
+      - /app/packages/shared/node_modules
+      - /app/packages/cli/node_modules
+      - /app/packages/daemon/node_modules
+      - /app/packages/mcp/node_modules
       # 持久化数据
       - chrome-profile:/data/chrome-profile
       - bb-browser-data:/data/bb-browser
@@ -51,6 +55,5 @@ services:
       retries: 3
 
 volumes:
-  node_modules:      # 容器内的 node_modules，避免和宿主机冲突
   chrome-profile:
   bb-browser-data:

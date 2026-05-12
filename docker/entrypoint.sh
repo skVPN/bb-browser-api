@@ -19,7 +19,7 @@ echo "================================================"
 # 创建必要目录
 mkdir -p /data/bb-browser /data/chrome-profile /root/.fluxbox
 
-# ── 安装依赖 + 构建（代码从 volume 挂载进来）─────────────
+# ── 构建项目（依赖已在镜像中安装）─────────────────────
 cd /app
 
 if [ ! -f "package.json" ]; then
@@ -27,9 +27,9 @@ if [ ! -f "package.json" ]; then
     exit 1
 fi
 
-# node_modules 不存在或 package.json 有更新时重新安装
-if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules/.modules.yaml" ]; then
-    echo "[startup] 安装依赖（包括 devDependencies，用于构建）..."
+# 检查依赖是否需要更新（package.json 有变化）
+if [ "package.json" -nt "/app/node_modules/.modules.yaml" ] 2>/dev/null; then
+    echo "[startup] 检测到依赖变化，重新安装..."
     pnpm install --frozen-lockfile --prod=false
 fi
 
