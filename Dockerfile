@@ -33,30 +33,33 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BB_BROWSER_HOME=/data/bb-browser \
     PYTHONUNBUFFERED=1
 
-# ── 换国内 apt 源（加速下载）─────────────────────────────
-RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+# ── 换国内 apt 源（用 http 避免 SSL 鸡生蛋问题）────────────
+RUN sed -i 's|https://deb.debian.org|http://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    printf 'Types: deb\nURIs: http://mirrors.ustc.edu.cn/debian\nSuites: trixie trixie-updates\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://mirrors.ustc.edu.cn/debian-security\nSuites: trixie-security\nComponents: main contrib non-free non-free-firmware\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' \
+    > /etc/apt/sources.list.d/debian.sources
 
-# ── 安装所有运行时依赖 ────────────────────────────────────
+# ── 安装所有运行时依赖 + Node.js（合并为一个 RUN，只跑一次 apt-get update）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # 基础工具
-    curl ca-certificates tini procps \
+    curl ca-certificates tini \
     # 虚拟显示 + VNC
     xvfb x11vnc novnc websockify \
-    # 窗口管理器
+    # 窗口管理器（Chrome 渲染需要）
     fluxbox \
     # Chromium
     chromium \
-    # 字体
-    fonts-noto-cjk fonts-liberation \
+    # 字体（fonts-noto-cjk 体积大约 100MB，不需要中文可注释掉）
+    fonts-noto-cjk \
+    fonts-liberation \
     # 进程管理
     supervisor \
-    && rm -rf /var/lib/apt/lists/*
-
-# ── 安装 Node.js ──────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && node --version && npm --version
+    && \
+    # 安装 Node.js（setup 脚本内部会 apt-get update，所以放在同一层末尾）
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    # 清理，减小镜像体积
+    rm -rf /var/lib/apt/lists/* && \
+    node --version && npm --version
 
 # ── 安装 pnpm ─────────────────────────────────────────────
 RUN npm install -g pnpm@9.15.0 --registry=https://registry.npmmirror.com
