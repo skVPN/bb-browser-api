@@ -48,8 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fluxbox \
     # Chromium
     chromium \
-    # 字体（fonts-noto-cjk 体积大约 100MB，不需要中文可注释掉）
-    fonts-noto-cjk \
+    # 字体（fonts-liberation 足够，fonts-noto-cjk 体积 100MB+ 仅中文网页需要）
     fonts-liberation \
     # 进程管理
     supervisor \

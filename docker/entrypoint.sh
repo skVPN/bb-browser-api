@@ -29,8 +29,8 @@ fi
 
 # node_modules 不存在或 package.json 有更新时重新安装
 if [ ! -d "node_modules" ] || [ "package.json" -nt "node_modules/.modules.yaml" ]; then
-    echo "[startup] 安装依赖..."
-    pnpm install --frozen-lockfile
+    echo "[startup] 安装依赖（包括 devDependencies，用于构建）..."
+    pnpm install --frozen-lockfile --prod=false
 fi
 
 # dist 不存在或源码有更新时重新构建

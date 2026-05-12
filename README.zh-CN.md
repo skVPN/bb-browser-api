@@ -64,6 +64,23 @@ bb-browser site recommend     # 看看哪些和你的浏览习惯匹配
 bb-browser site zhihu/hot     # 开搜
 ```
 
+### Docker 部署
+
+如果需要在服务器上部署（带 VNC 网页访问），参见：
+
+- **[快速部署指南](DEPLOY.md)** - 5 分钟快速上手
+- **[完整部署文档](docs/docker-deployment.md)** - 详细配置和故障排查
+
+```bash
+# 快速启动
+git clone https://github.com/skVPN/bb-browser-api.git
+cd bb-browser-api
+docker compose up -d
+
+# 访问 http://<服务器IP>:6080/vnc.html 查看 Chrome 画面
+# API: http://<服务器IP>:18888
+```
+
 ### OpenClaw（无需安装扩展）
 
 如果你使用 [OpenClaw](https://openclaw.ai)，bb-browser 可以直接通过 OpenClaw 内置浏览器运行，不需要额外安装 Chrome 扩展或 daemon：

@@ -1,194 +1,352 @@
 # Docker 部署指南
 
-## 架构说明
+## 问题诊断
 
-容器内运行三个进程，由 `supervisord` 统一管理：
+### 1. docker-compose v1 的 KeyError: 'id' bug
 
+**症状**：
 ```
-容器
-├── supervisord (PID 1 via tini)
-│   ├── chromium --headless=new --remote-debugging-port=9222
-│   └── node dist/daemon.js --host 0.0.0.0 --port 18888 --cdp-port 9222
-└── [可选] 你的 Python 业务代码
+KeyError: 'id'
+Exception in thread Thread-4 (watch_events)
 ```
 
-**为什么用 supervisord？**  
-Chromium 和 daemon 需要同时运行，supervisord 负责：
-- 按顺序启动（先 Chromium，再 daemon）
-- 任一进程崩溃时自动重启
-- 统一管理日志输出
+**原因**：docker-compose v1（Python 版本）的已知 bug
 
-## 快速开始
+**解决方案**：升级到 docker-compose v2（Go 版本）
 
-### 方式一：docker-compose（推荐）
+---
+
+## 安装 docker-compose v2
+
+### 方法 1：通过 Docker CLI Plugin（推荐）
 
 ```bash
-# 构建并启动
-docker-compose up -d
+# Ubuntu/Debian
+# 1. 更新 Docker 仓库配置
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
 
-# 查看日志
-docker-compose logs -f bb-browser
+# 2. 添加 Docker 官方 GPG key
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-# 测试 API
-curl http://localhost:18888/status
+# 3. 添加 Docker 仓库
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# 停止
-docker-compose down
+# 4. 安装 docker-compose-plugin
+sudo apt-get update
+sudo apt-get install -y docker-compose-plugin
+
+# 5. 验证安装
+docker compose version
 ```
 
-### 方式二：docker build + run
+### 方法 2：直接下载二进制（适用于任何 Linux）
 
 ```bash
-# 构建镜像
-docker build -t bb-browser:latest .
+# 1. 下载最新版本（替换 v2.24.5 为最新版本号）
+COMPOSE_VERSION="v2.24.5"
+sudo curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" \
+  -o /usr/local/bin/docker-compose
 
-# 运行
-docker run -d \
-  --name bb-browser \
-  -p 18888:18888 \
-  --shm-size=256m \
-  --cap-add=SYS_ADMIN \
-  --security-opt seccomp=unconfined \
-  -v chrome-profile:/data/chrome-profile \
-  -v bb-browser-data:/data/bb-browser \
-  bb-browser:latest
+# 2. 添加执行权限
+sudo chmod +x /usr/local/bin/docker-compose
 
-# 查看状态
-docker logs -f bb-browser
+# 3. 创建软链接（让 docker compose 命令可用）
+sudo ln -sf /usr/local/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+
+# 4. 验证安装
+docker compose version
 ```
 
-## 使用 API
-
-daemon 启动后，在宿主机直接调用：
+### 方法 3：使用国内镜像加速（如果 GitHub 下载慢）
 
 ```bash
-# 检查状态
-curl http://localhost:18888/status
+# 使用 ghproxy 镜像
+COMPOSE_VERSION="v2.24.5"
+sudo curl -L "https://ghproxy.com/https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" \
+  -o /usr/local/bin/docker-compose
 
-# Fetch API（在浏览器上下文中执行请求）
-curl -X POST http://localhost:18888/api/fetch \
+sudo chmod +x /usr/local/bin/docker-compose
+sudo ln -sf /usr/local/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
+docker compose version
+```
+
+---
+
+## 卸载旧版本 docker-compose v1
+
+```bash
+# 如果是通过 pip 安装的
+sudo pip uninstall docker-compose
+
+# 如果是通过 apt 安装的
+sudo apt-get remove docker-compose
+
+# 删除旧的二进制文件
+sudo rm -f /usr/bin/docker-compose
+```
+
+---
+
+## 构建和运行
+
+### 1. 构建镜像
+
+```bash
+cd /home/ecs-user/bb-browser-api
+
+# 使用 docker compose v2（注意是空格不是横杠）
+docker compose build
+```
+
+### 2. 启动服务
+
+```bash
+docker compose up -d
+```
+
+### 3. 查看日志
+
+```bash
+# 查看所有服务日志
+docker compose logs -f
+
+# 只看 bb-browser 服务
+docker compose logs -f bb-browser
+```
+
+### 4. 停止服务
+
+```bash
+docker compose down
+```
+
+### 5. 重启服务（代码改动后）
+
+```bash
+# 代码通过 volume 挂载，改代码后只需重启容器，不需要重新 build
+docker compose restart bb-browser
+```
+
+---
+
+## 访问服务
+
+### 1. noVNC 网页访问
+
+打开浏览器访问：
+```
+http://<服务器IP>:6080/vnc.html
+```
+
+**VNC 密码**：在 `docker-compose.yml` 中配置的 `VNC_PASSWORD`（默认 `changeme`）
+
+### 2. bb-browser HTTP API
+
+```bash
+# 测试 API 是否正常
+curl http://<服务器IP>:18888/api/fetch \
+  -X POST \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://api.github.com/users/octocat"}'
-
-# 抓包 API
-curl "http://localhost:18888/api/capture?url=https://example.com&pattern=api"
-
-# 存储 API（读取 Cookie）
-curl "http://localhost:18888/api/storage?domain=example.com"
+  -d '{
+    "url": "https://httpbin.org/get",
+    "method": "GET"
+  }'
 ```
 
-## 在容器内运行 Python 脚本
-
-如果你的 Python 代码需要调用 bb-browser API：
-
-```bash
-# 方式一：exec 进入容器
-docker exec -it bb-browser python3 -c "
-import requests
-resp = requests.post('http://127.0.0.1:18888/api/fetch',
-    json={'url': 'https://httpbin.org/get'})
-print(resp.json())
-"
-
-# 方式二：在 entrypoint 中运行（修改 docker-compose.yml 的 command）
-# command: python /app/your_script.py
-```
-
-## 持久化登录态
-
-Chrome 用户数据（Cookie、登录态）存储在 `chrome-profile` volume 中。
-
-```bash
-# 查看 volume
-docker volume inspect bb-browser_chrome-profile
-
-# 备份
-docker run --rm \
-  -v bb-browser_chrome-profile:/data \
-  -v $(pwd):/backup \
-  alpine tar czf /backup/chrome-profile.tar.gz -C /data .
-
-# 恢复
-docker run --rm \
-  -v bb-browser_chrome-profile:/data \
-  -v $(pwd):/backup \
-  alpine tar xzf /backup/chrome-profile.tar.gz -C /data
-```
+---
 
 ## 常见问题
 
-### Chromium 启动失败
+### Q1: 构建时报错 `turbo: not found`
 
+**症状**：
 ```
-错误：Running as root without --no-sandbox is not supported
-```
-
-解决：Dockerfile 中已加入 `--no-sandbox`，或在 docker-compose.yml 中添加：
-```yaml
-cap_add:
-  - SYS_ADMIN
+sh: 1: turbo: not found
+ELIFECYCLE  Command failed.
 ```
 
-### /dev/shm 不足
+**原因**：`pnpm install --frozen-lockfile` 默认不安装 devDependencies，但 `turbo` 在 devDependencies 中
 
-```
-错误：[0000/000000.000000:FATAL:memory.cc] Out of memory
-```
-
-解决：增大 shm_size：
-```yaml
-shm_size: "512mb"
-```
-
-### daemon 连接 CDP 超时
-
-检查 Chromium 是否正常启动：
-```bash
-docker exec bb-browser curl -s http://127.0.0.1:9222/json/version
-```
-
-### 端口冲突
-
-修改 docker-compose.yml 中的端口映射：
-```yaml
-ports:
-  - "18889:18888"  # 宿主机 18889 → 容器 18888
-```
-
-## 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `BB_DAEMON_PORT` | `18888` | daemon HTTP 端口 |
-| `BB_CDP_PORT` | `9222` | Chrome CDP 端口 |
-| `BB_BROWSER_HOME` | `/data/bb-browser` | 数据目录 |
-| `CDP_TIMEOUT` | `30` | 等待 CDP 就绪的超时秒数 |
-
-## 镜像大小优化
-
-当前镜像包含完整 Chromium，体积约 800MB~1GB。如需减小：
-
-1. **使用多阶段构建**：构建阶段用完整镜像，运行阶段只复制 `dist/`
-2. **使用外部 Chrome**：不在容器内安装 Chromium，通过 `--cdp-host` 连接宿主机的 Chrome
-3. **使用 chrome-headless-shell**：比完整 Chromium 小约 30%
-
-### 连接宿主机 Chrome（最小化方案）
+**解决方案 1（推荐）**：修改 `docker/entrypoint.sh`
 
 ```bash
-# 宿主机启动 Chrome（开启远程调试）
-google-chrome --remote-debugging-port=9222 --headless=new &
+# 在服务器上执行
+cd /home/ecs-user/bb-browser-api
 
-# 容器只运行 daemon，连接宿主机 Chrome
-docker run -d \
-  --name bb-daemon-only \
-  -p 18888:18888 \
-  --add-host=host.docker.internal:host-gateway \
-  -e BB_CDP_HOST=host.docker.internal \
-  -e BB_CDP_PORT=9222 \
-  bb-browser:latest \
-  node /app/dist/daemon.js \
-    --host 0.0.0.0 \
-    --port 18888 \
-    --cdp-host host.docker.internal \
-    --cdp-port 9222
+# 修改 entrypoint.sh
+sed -i 's/pnpm install --frozen-lockfile$/pnpm install --frozen-lockfile --prod=false/' docker/entrypoint.sh
+
+# 重启容器
+docker compose restart bb-browser
+
+# 查看日志
+docker compose logs -f bb-browser
 ```
+
+**解决方案 2**：手动在容器内安装
+
+```bash
+# 进入容器
+docker compose exec bb-browser bash
+
+# 安装所有依赖
+cd /app
+pnpm install --prod=false
+
+# 构建
+pnpm build
+
+# 退出容器
+exit
+
+# 重启服务
+docker compose restart bb-browser
+```
+
+### Q2: 构建时 apt-get update 很慢
+
+**A**: 已经配置了中科大镜像源（http 协议避免 SSL 证书问题）
+
+### Q3: 需要中文字体支持
+
+**A**: 编辑 `Dockerfile`，取消注释 `fonts-noto-cjk`：
+
+```dockerfile
+# 字体（fonts-liberation 足够，fonts-noto-cjk 体积 100MB+ 仅中文网页需要）
+fonts-noto-cjk \
+fonts-liberation \
+```
+
+### Q4: 改代码后需要重新 build 吗？
+
+**A**: 不需要！代码通过 volume 挂载，改完代码后只需：
+
+```bash
+# 在容器内重新构建
+docker compose exec bb-browser sh -c "cd /app && pnpm build"
+
+# 重启服务
+docker compose restart bb-browser
+```
+
+或者直接重启（entrypoint.sh 会自动检测并重新构建）：
+
+```bash
+docker compose restart bb-browser
+```
+
+### Q5: VNC 连接提示密码错误
+
+**A**: 检查 `docker-compose.yml` 中的 `VNC_PASSWORD` 环境变量，留空则不需要密码：
+
+```yaml
+environment:
+  VNC_PASSWORD: ""  # 留空不需要密码
+```
+
+---
+
+## 架构说明
+
+```
+浏览器 → noVNC(6080) → websockify → x11vnc(5900) → Xvfb(:99) → Chrome + fluxbox
+                                                                      ↓
+                                                            bb-browser daemon(18888)
+```
+
+**组件说明**：
+
+1. **Xvfb** - 虚拟显示器，Chrome 在上面渲染画面
+2. **fluxbox** - 轻量级窗口管理器，让 Chrome 窗口能正常显示
+3. **x11vnc** - VNC 服务器，把虚拟显示器的画面通过 VNC 协议暴露
+4. **websockify** - WebSocket 代理，把 VNC 转成 WebSocket
+5. **noVNC** - 网页 VNC 客户端，让浏览器可以直接访问
+6. **Chromium** - 运行在虚拟显示器上，开启 CDP 远程调试
+7. **bb-browser daemon** - HTTP API 服务，通过 CDP 控制 Chrome
+
+所有进程由 **supervisord** 管理，自动重启。
+
+---
+
+## 性能优化
+
+### 1. 减小镜像体积
+
+- 已去掉 `procps`（非必要）
+- 默认不安装 `fonts-noto-cjk`（100MB+，仅中文网页需要）
+- 合并 `apt-get update` 到一个 RUN 层
+- 使用 `--no-install-recommends` 避免安装推荐包
+
+### 2. 加速构建
+
+- 使用国内 apt 源（中科大 http 源）
+- 使用国内 npm 源（npmmirror.com）
+- 代码通过 volume 挂载，不打包进镜像
+
+### 3. 运行时优化
+
+- `shm_size: 512mb` - 增加共享内存，避免 Chrome 崩溃
+- `cap_add: SYS_ADMIN` + `seccomp:unconfined` - Chrome 沙箱需要
+- `node_modules` 用独立 volume - 避免宿主机和容器的 node_modules 冲突
+
+---
+
+## 监控和调试
+
+### 查看容器状态
+
+```bash
+docker compose ps
+```
+
+### 查看资源占用
+
+```bash
+docker stats bb-browser
+```
+
+### 进入容器调试
+
+```bash
+docker compose exec bb-browser bash
+```
+
+### 查看 supervisord 进程状态
+
+```bash
+docker compose exec bb-browser supervisorctl status
+```
+
+### 重启单个服务
+
+```bash
+# 重启 chromium
+docker compose exec bb-browser supervisorctl restart chromium
+
+# 重启 bb-daemon
+docker compose exec bb-browser supervisorctl restart bb-daemon
+```
+
+---
+
+## 生产环境建议
+
+1. **修改 VNC 密码**：不要使用默认的 `changeme`
+2. **配置反向代理**：使用 Nginx/Caddy 添加 HTTPS 和访问控制
+3. **限制资源**：在 `docker-compose.yml` 中添加 `mem_limit` 和 `cpus`
+4. **定期备份**：备份 `chrome-profile` 和 `bb-browser-data` volumes
+5. **监控日志**：使用 `docker compose logs` 或集成到日志系统
+
+---
+
+## 更新日志
+
+- 2026-05-12: 初始版本，基于 debian:trixie-slim
+- 优化：去掉 `fonts-noto-cjk`（默认），减小镜像体积
+- 优化：代码通过 volume 挂载，改代码不需要重新 build
