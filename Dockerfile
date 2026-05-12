@@ -86,7 +86,8 @@ RUN pnpm install --frozen-lockfile --prod=false
 # 只复制启动脚本到镜像
 COPY docker/entrypoint.sh /entrypoint.sh
 COPY docker/start-x11vnc.sh /start-x11vnc.sh
-RUN chmod +x /entrypoint.sh /start-x11vnc.sh
+COPY docker/start-chromium.sh /start-chromium.sh
+RUN chmod +x /entrypoint.sh /start-x11vnc.sh /start-chromium.sh
 
 # ── 数据目录 ──────────────────────────────────────────────
 RUN mkdir -p /data/bb-browser /data/chrome-profile /root/.fluxbox \
