@@ -2,7 +2,7 @@
 
 # bb-browser
 
-### 坏孩子浏览器 BadBoy Browser
+### 坏男孩浏览器 BadBoy Browser
 
 **你的浏览器就是 API。不需要密钥，不需要爬虫，不需要模拟。**
 
@@ -13,6 +13,10 @@
 [English](README.md) · [中文](README.zh-CN.md)
 
 </div>
+
+---
+
+> **Fork 说明 (skVPN/bb-browser-api)：** 本 fork 在 daemon 中新增了三个 HTTP API 接口，并将默认端口改为 **18888**。详见 [本 Fork 的改动](#本-fork-的改动)。
 
 ---
 
@@ -35,12 +39,12 @@ bb-browser site stackoverflow/search "async"     # 搜 StackOverflow
 
 互联网是为浏览器构建的。AI Agent 一直试图通过 API 访问它 — 但 99% 的网站不提供 API。
 
-bb-browser 翻转了这个逻辑：**不是让网站适配机器，而是让机器使用人的界面。** adapter 在你的浏览器 tab 里跑 `eval`，用你的 Cookie 调 `fetch()`，或者直接调用页面的 webpack 模块。网站以为是你在操作。因为**就是你**。
+bb-browser 翻转了这一逻辑：**不是让网站适配机器，而是让机器使用人的界面。** adapter 在你的浏览器 tab 里跑 `eval`，用你的 Cookie 调 `fetch()`，或者直接调用页面的 webpack 模块。网站以为是你在操作。因为**就是你**。
 
 | | Playwright / Selenium | 爬虫库 | bb-browser |
 |---|---|---|---|
 | 浏览器 | 无头、隔离环境 | 没有浏览器 | 你的真实 Chrome |
-| 登录态 | 没有，要重新登录 | 偷 Cookie | 已经在了 |
+| 登录态 | 没有，需重新登录 | 偷 Cookie | 已经在了 |
 | 反爬检测 | 容易被识别 | 猫鼠游戏 | 无法检测 — 它就是用户 |
 | 复杂鉴权 | 无法复制 | 需要逆向 | 页面自己处理 |
 
@@ -57,7 +61,7 @@ npm install -g bb-browser
 ```bash
 bb-browser site update        # 拉取社区适配器
 bb-browser site recommend     # 看看哪些和你的浏览习惯匹配
-bb-browser site zhihu/hot     # 开搞
+bb-browser site zhihu/hot     # 开搜
 ```
 
 ### OpenClaw（无需安装扩展）
@@ -108,7 +112,7 @@ ClawHub Skill: [bb-browser-openclaw](https://clawhub.ai/yan5xu/bb-browser)
 bb-browser guide    # 完整教程
 ```
 
-跟你的 AI Agent 说：*「帮我把 XX 网站 CLI 化」*。它会读 guide，用 `network --with-body` 抓包逆向，写 adapter，测试，然后提 PR 到社区仓库。全程自动。
+跟你的 AI Agent 说：*"帮我把 XX 网站 CLI 化"*。它会读 guide，用 `network --with-body` 抓包逆向，写 adapter，测试，然后提 PR 到社区仓库。全程自动。
 
 三种 adapter 复杂度：
 
@@ -158,14 +162,69 @@ bb-browser screenshot                 # 截图
 ```bash
 bb-browser site xueqiu/hot-stock 5 --jq '.items[] | {name, changePercent}'
 # {"name":"云天化","changePercent":"2.08%"}
-# {"name":"东芯股份","changePercent":"-7.60%"}
+# {"name":"东吴股份","changePercent":"-7.60%"}
 
 bb-browser site info xueqiu/stock   # 查看 adapter 参数、示例、域名
 ```
 
+## HTTP API 编程接入
+
+Daemon 暴露 HTTP API 供直接集成。**默认端口：`18888`**（相比上游的 `19824` 已修改）。
+
+```bash
+# 启动 daemon
+bb-browser daemon start
+
+# Fetch API — 在浏览器上下文中执行请求
+curl -X POST http://localhost:18888/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.github.com/users/octocat",
+    "method": "GET",
+    "credentials": "include"
+  }'
+
+# Capture API — 访问页面并捕获匹配的网络请求
+curl "http://localhost:18888/api/capture?url=https://example.com&pattern=api"
+
+# Storage API — 读取指定域名的 Cookie / localStorage / sessionStorage
+curl "http://localhost:18888/api/storage?domain=example.com"
+```
+
+**核心优势：** 在你的真实浏览器上下文中执行，自动携带 Cookie 和登录态。
+
+### Node.js 示例
+
+```javascript
+const response = await fetch('http://localhost:18888/api/fetch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    url: 'https://www.reddit.com/api/me.json',
+    credentials: 'include',   // 发送 Cookie
+  }),
+});
+const result = await response.json();
+console.log(result.body);  // 你的 Reddit 用户数据
+```
+
+### Python 示例
+
+```python
+import requests
+
+response = requests.post('http://localhost:18888/api/fetch', json={
+    'url': 'https://api.github.com/users/octocat',
+})
+result = response.json()
+print(result['body'])
+```
+
+**文档：** [API Fetch 指南](docs/api-fetch.md) · [抓包与存储指南](docs/api-capture-storage.md)
+
 ## Daemon 配置
 
-Daemon 默认绑定 `127.0.0.1:19824`，可通过 `--host` 自定义监听地址：
+Daemon 默认绑定 `127.0.0.1:18888`，可通过 `--host` 自定义监听地址：
 
 ```bash
 bb-browser daemon --host 127.0.0.1    # 仅 IPv4（解决 macOS IPv6 问题）
@@ -176,10 +235,10 @@ bb-browser daemon --host 0.0.0.0      # 监听所有网卡（用于 Tailscale / 
 
 ```
 AI Agent (Claude Code, Codex, Cursor 等)
-       │ CLI 或 MCP (stdio)
+       ┆ CLI 或 MCP (stdio)
        ▼
 bb-browser CLI ──HTTP──▶ Daemon ──CDP WebSocket──▶ 你的真实浏览器
-                           │
+                           ┆
                     ┌──────┴──────┐
                     │ Per-tab     │
                     │ 事件缓存    │
@@ -189,6 +248,128 @@ bb-browser CLI ──HTTP──▶ Daemon ──CDP WebSocket──▶ 你的真
                     └─────────────┘
 ```
 
+---
+
+## 本 Fork 的改动
+
+本 fork ([skVPN/bb-browser-api](https://github.com/skVPN/bb-browser-api)) 在上游 [epiral/bb-browser](https://github.com/epiral/bb-browser) 基础上做了以下改动：
+
+### 1. 默认端口修改：`19824` → `18888`
+
+**文件：** `packages/shared/src/constants.ts`
+
+```diff
+- export const DAEMON_PORT = 19824;
++ export const DAEMON_PORT = 18888;
+```
+
+### 2. 新增 HTTP API：`POST /api/fetch`
+
+在浏览器上下文中执行 HTTP 请求（携带 Cookie、登录态等）。
+
+**文件：** `packages/daemon/src/http-server.ts`、`packages/daemon/src/command-dispatch.ts`
+
+**请求：**
+```json
+POST http://localhost:18888/api/fetch
+{
+  "url": "https://api.example.com/data",
+  "method": "GET",
+  "headers": { "Accept": "application/json" },
+  "credentials": "include",
+  "body": ""
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `url` | string | ✅ | 目标 URL |
+| `method` | string | — | HTTP 方法，默认 `GET` |
+| `headers` | object | — | 自定义请求头 |
+| `credentials` | `omit` \| `same-origin` \| `include` | — | Cookie 发送策略，默认 `omit` |
+| `body` | string | — | 请求体（POST/PUT 时使用） |
+| `tabId` | string \| number | — | 指定使用的标签页 |
+
+**响应：**
+```json
+{
+  "status": 200,
+  "contentType": "application/json",
+  "body": { ... }
+}
+```
+
+> **关于 `credentials`：** `Sec-Fetch-*` 等安全 headers 由浏览器自动设置，JavaScript 无法覆盖（这是浏览器安全规范）。`credentials` 字段控制是否发送 Cookie。
+
+### 3. 新增 HTTP API：`GET /api/capture`
+
+访问指定 URL 并捕获匹配的网络请求。
+
+**文件：** `packages/daemon/src/http-server.ts`
+
+```
+GET http://localhost:18888/api/capture?url=https://example.com&pattern=api\.&timeout=5000
+```
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `url` | ✅ | 要访问的页面 URL |
+| `pattern` | — | 过滤请求的正则表达式 |
+| `timeout` | — | 等待时间（毫秒），默认 `5000` |
+
+**响应：**
+```json
+{
+  "requests": [
+    {
+      "url": "https://example.com/api/data",
+      "method": "GET",
+      "status": 200,
+      "responseBody": "..."
+    }
+  ]
+}
+```
+
+### 4. 新增 HTTP API：`GET /api/storage`
+
+读取指定域名的 Cookie、localStorage、sessionStorage。
+
+**文件：** `packages/daemon/src/http-server.ts`
+
+```
+GET http://localhost:18888/api/storage?domain=example.com
+```
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `domain` | ✅ | 要读取存储的域名 |
+
+**响应：**
+```json
+{
+  "cookies": [ { "name": "session", "value": "...", "domain": "example.com" } ],
+  "localStorage": { "key": "value" },
+  "sessionStorage": { "key": "value" }
+}
+```
+
+### 5. `Request` 协议新增 `credentials` 字段
+
+**文件：** `packages/shared/src/protocol.ts`
+
+```typescript
+export interface Request {
+  // ...已有字段...
+  /** fetch credentials 选项：omit | same-origin | include（默认：omit） */
+  credentials?: "omit" | "same-origin" | "include";
+}
+```
+
+之前的 fetch 实现硬编码了 `credentials: 'include'`，现在默认为 `'omit'`，并尊重调用方的选择。
+
+---
+
 ## 许可证
 
-[MIT](LICENSE)
+MIT

@@ -16,6 +16,10 @@
 
 ---
 
+> **Fork Note (skVPN/bb-browser-api):** This fork adds three new HTTP API endpoints to the daemon and changes the default port to **18888**. See [What's Changed in This Fork](#whats-changed-in-this-fork) for details.
+
+---
+
 You're already logged into Twitter, Reddit, YouTube, Zhihu, Bilibili, LinkedIn, GitHub — bb-browser lets AI agents **use that directly**.
 
 ```bash
@@ -158,14 +162,69 @@ All commands support `--json` output, `--jq <expr>` for inline filtering, and `-
 ```bash
 bb-browser site xueqiu/hot-stock 5 --jq '.items[] | {name, changePercent}'
 # {"name":"云天化","changePercent":"2.08%"}
-# {"name":"东芯股份","changePercent":"-7.60%"}
+# {"name":"东吴股份","changePercent":"-7.60%"}
 
 bb-browser site info xueqiu/stock   # view adapter args, example, domain
 ```
 
+## HTTP API for programmatic access
+
+The daemon exposes an HTTP API for direct integration. **Default port: `18888`** (changed from upstream's `19824`).
+
+```bash
+# Start daemon
+bb-browser daemon start
+
+# Fetch API — execute a request inside the browser context
+curl -X POST http://localhost:18888/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.github.com/users/octocat",
+    "method": "GET",
+    "credentials": "include"
+  }'
+
+# Capture API — visit a URL and capture matching network requests
+curl "http://localhost:18888/api/capture?url=https://example.com&pattern=api"
+
+# Storage API — read cookies / localStorage / sessionStorage for a domain
+curl "http://localhost:18888/api/storage?domain=example.com"
+```
+
+**Key advantage:** Executes in your real browser context with cookies and login state automatically included.
+
+### Node.js example
+
+```javascript
+const response = await fetch('http://localhost:18888/api/fetch', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    url: 'https://www.reddit.com/api/me.json',
+    credentials: 'include',   // send cookies
+  }),
+});
+const result = await response.json();
+console.log(result.body);  // Your Reddit user data
+```
+
+### Python example
+
+```python
+import requests
+
+response = requests.post('http://localhost:18888/api/fetch', json={
+    'url': 'https://api.github.com/users/octocat',
+})
+result = response.json()
+print(result['body'])
+```
+
+**Documentation:** [API Fetch Guide](docs/api-fetch.md) · [Capture & Storage Guide](docs/api-capture-storage.md)
+
 ## Daemon configuration
 
-The daemon binds to `127.0.0.1:19824` by default. You can customize the host with `--host`:
+The daemon binds to `127.0.0.1:18888` by default. You can customize the host with `--host`:
 
 ```bash
 bb-browser daemon --host 127.0.0.1    # IPv4 only (fix macOS IPv6 issues)
@@ -176,10 +235,10 @@ bb-browser daemon --host 0.0.0.0      # listen on all interfaces (for Tailscale 
 
 ```
 AI Agent (Claude Code, Codex, Cursor, etc.)
-       │ CLI or MCP (stdio)
+       ┆ CLI or MCP (stdio)
        ▼
 bb-browser CLI ──HTTP──▶ Daemon ──CDP WebSocket──▶ Your Real Browser
-                           │
+                           ┆
                     ┌──────┴──────┐
                     │ Per-tab     │
                     │ event cache │
@@ -189,6 +248,128 @@ bb-browser CLI ──HTTP──▶ Daemon ──CDP WebSocket──▶ Your Real
                     └─────────────┘
 ```
 
+---
+
+## What's Changed in This Fork
+
+This fork ([skVPN/bb-browser-api](https://github.com/skVPN/bb-browser-api)) adds the following changes on top of the upstream [epiral/bb-browser](https://github.com/epiral/bb-browser):
+
+### 1. Default port changed: `19824` → `18888`
+
+**File:** `packages/shared/src/constants.ts`
+
+```diff
+- export const DAEMON_PORT = 19824;
++ export const DAEMON_PORT = 18888;
+```
+
+### 2. New HTTP API: `POST /api/fetch`
+
+Execute an HTTP request inside the browser context (with cookies, login state, etc.).
+
+**File:** `packages/daemon/src/http-server.ts`, `packages/daemon/src/command-dispatch.ts`
+
+**Request:**
+```json
+POST http://localhost:18888/api/fetch
+{
+  "url": "https://api.example.com/data",
+  "method": "GET",
+  "headers": { "Accept": "application/json" },
+  "credentials": "include",
+  "body": ""
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | ✅ | Target URL |
+| `method` | string | — | HTTP method, default `GET` |
+| `headers` | object | — | Custom request headers |
+| `credentials` | `omit` \| `same-origin` \| `include` | — | Cookie behavior, default `omit` |
+| `body` | string | — | Request body (for POST/PUT) |
+| `tabId` | string \| number | — | Specific tab to use |
+
+**Response:**
+```json
+{
+  "status": 200,
+  "contentType": "application/json",
+  "body": { ... }
+}
+```
+
+> **Note on `credentials`:** `Sec-Fetch-*` headers are set by the browser automatically and cannot be overridden via JavaScript — this is a browser security requirement. The `credentials` field controls whether cookies are sent.
+
+### 3. New HTTP API: `GET /api/capture`
+
+Visit a URL and capture network requests matching a pattern.
+
+**File:** `packages/daemon/src/http-server.ts`
+
+```
+GET http://localhost:18888/api/capture?url=https://example.com&pattern=api\.&timeout=5000
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `url` | ✅ | Page URL to visit |
+| `pattern` | — | Regex to filter captured requests |
+| `timeout` | — | Wait time in ms, default `5000` |
+
+**Response:**
+```json
+{
+  "requests": [
+    {
+      "url": "https://example.com/api/data",
+      "method": "GET",
+      "status": 200,
+      "responseBody": "..."
+    }
+  ]
+}
+```
+
+### 4. New HTTP API: `GET /api/storage`
+
+Read cookies, localStorage, and sessionStorage for a domain.
+
+**File:** `packages/daemon/src/http-server.ts`
+
+```
+GET http://localhost:18888/api/storage?domain=example.com
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `domain` | ✅ | Domain to read storage from |
+
+**Response:**
+```json
+{
+  "cookies": [ { "name": "session", "value": "...", "domain": "example.com" } ],
+  "localStorage": { "key": "value" },
+  "sessionStorage": { "key": "value" }
+}
+```
+
+### 5. `credentials` field added to `Request` protocol
+
+**File:** `packages/shared/src/protocol.ts`
+
+```typescript
+export interface Request {
+  // ...existing fields...
+  /** fetch credentials option: omit | same-origin | include (default: omit) */
+  credentials?: "omit" | "same-origin" | "include";
+}
+```
+
+Previously the fetch implementation hardcoded `credentials: 'include'`. It now defaults to `'omit'` and respects the caller's choice.
+
+---
+
 ## License
 
-[MIT](LICENSE)
+MIT

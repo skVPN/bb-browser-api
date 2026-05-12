@@ -771,6 +771,86 @@ export async function dispatchRequest(
       });
     }
 
+    case "fetch": {
+      if (!request.url) return fail(request.id, "Missing url parameter");
+      const seq = tab.recordAction();
+      
+      // 构建 fetch 脚本
+      const method = (request.method || "GET").toUpperCase();
+      const hasBody = request.body && method !== "GET" && method !== "HEAD";
+      
+      let headersExpr = "{}";
+      if (request.headers) {
+        headersExpr = JSON.stringify(request.headers);
+      }
+      
+      // 使用用户提供的 credentials，默认为 'omit' 以避免浏览器自动添加 CORS 相关的 headers
+      const credentials = request.credentials || 'omit';
+      
+      const fetchScript = `(async () => {
+        try {
+          const resp = await fetch(${JSON.stringify(request.url)}, {
+            method: ${JSON.stringify(method)},
+            credentials: ${JSON.stringify(credentials)},
+            headers: ${headersExpr}${hasBody ? `,\n            body: ${JSON.stringify(request.body)}` : ""}
+          });
+          const contentType = resp.headers.get('content-type') || '';
+          let body;
+          if (contentType.includes('application/json') && resp.status !== 204) {
+            try { body = await resp.json(); } catch { body = await resp.text(); }
+          } else {
+            body = await resp.text();
+          }
+          return {
+            status: resp.status,
+            contentType,
+            body
+          };
+        } catch (e) {
+          return { 
+            error: e.message,
+            errorName: e.name,
+            errorStack: e.stack,
+            currentUrl: location.href
+          };
+        }
+      })()`;
+      
+      const result = await cdp.evaluate<{ 
+        status?: number; 
+        contentType?: string; 
+        body?: unknown; 
+        error?: string;
+        errorName?: string;
+        errorStack?: string;
+        currentUrl?: string;
+      }>(
+        target.id,
+        fetchScript,
+        true
+      );
+      
+      if (result?.error) {
+        const errorDetails = [
+          `Fetch error: ${result.error}`,
+          result.errorName ? `(${result.errorName})` : '',
+          result.currentUrl ? `from page: ${result.currentUrl}` : ''
+        ].filter(Boolean).join(' ');
+        
+        return fail(request.id, errorDetails);
+      }
+      
+      return ok(request.id, {
+        fetchResponse: {
+          status: result?.status ?? 0,
+          contentType: result?.contentType ?? "",
+          body: result?.body,
+        },
+        tab: shortId,
+        seq,
+      });
+    }
+
     // -----------------------------------------------------------------------
     // Tab management
     // -----------------------------------------------------------------------

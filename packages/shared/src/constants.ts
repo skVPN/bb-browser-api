@@ -3,7 +3,7 @@
  */
 
 /** Daemon HTTP 服务端口 */
-export const DAEMON_PORT = 19824;
+export const DAEMON_PORT = 18888;
 
 /** Daemon 主机地址 */
 export const DAEMON_HOST = "127.0.0.1";

@@ -25,6 +25,7 @@ export type ActionType =
   | "forward"
   | "refresh"
   | "eval"
+  | "fetch"
   | "tab_list"
   | "tab_new"
   | "tab_select"
@@ -109,12 +110,18 @@ export interface Request {
   ms?: number;
   /** 增量查询起点（observation 命令使用，支持 seq 数值或 "last_action"） */
   since?: number | "last_action";
-  /** HTTP 方法过滤（network requests 使用） */
+  /** HTTP 方法（network requests 过滤使用 / fetch 命令使用） */
   method?: string;
   /** HTTP 状态码过滤（network requests 使用，支持 "4xx"/"5xx" 或具体数字） */
   status?: string;
   /** 返回条数限制（observation 命令使用） */
   limit?: number;
+  /** 请求体（fetch 命令使用） */
+  body?: string;
+  /** 请求头（fetch 命令使用） */
+  headers?: Record<string, string>;
+  /** fetch credentials 选项（fetch 命令使用，可选值：omit, same-origin, include，默认 omit） */
+  credentials?: "omit" | "same-origin" | "include";
 }
 
 /** 元素引用信息 */
@@ -314,6 +321,12 @@ export interface ResponseData {
     visits: number;
     titles: string[];
   }>;
+  /** fetch 响应数据（fetch 命令返回） */
+  fetchResponse?: {
+    status: number;
+    contentType: string;
+    body: unknown;
+  };
 }
 
 /** 响应类型 */
