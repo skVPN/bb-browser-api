@@ -2,6 +2,7 @@ import { ensureDaemon, getDaemonStatus, stopDaemon } from "../daemon-manager.js"
 
 export interface DaemonOptions {
   json?: boolean;
+  cdpUrl?: string;  // 用户指定的 CDP URL，例如 http://localhost:9222
 }
 
 export async function statusCommand(
@@ -61,7 +62,7 @@ export async function statusCommand(
 export async function startCommand(
   options: DaemonOptions = {}
 ): Promise<void> {
-  await ensureDaemon();
+  await ensureDaemon(options.cdpUrl);
   const status = await getDaemonStatus();
   if (options.json) {
     console.log(JSON.stringify(status, null, 2));

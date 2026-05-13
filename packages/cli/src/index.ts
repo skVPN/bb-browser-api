@@ -92,6 +92,7 @@ bb-browser - AI Agent 浏览器自动化工具
   trace start|stop|status      录制用户操作
   history search|domains       查看浏览历史
   daemon [start|status|stop]   管理 daemon（start: 后台启动）
+    --cdp-url <url>            指定 CDP URL（例如：http://localhost:9222）
 
 选项：
   --json               以 JSON 格式输出
@@ -441,7 +442,10 @@ async function main(): Promise<void> {
           break;
         }
         if (daemonSubcommand === "start") {
-          await startCommand({ json: parsed.flags.json });
+          // 解析 --cdp-url 参数
+          const cdpUrlIndex = process.argv.findIndex(a => a === "--cdp-url");
+          const cdpUrl = cdpUrlIndex >= 0 ? process.argv[cdpUrlIndex + 1] : undefined;
+          await startCommand({ json: parsed.flags.json, cdpUrl });
           break;
         }
 

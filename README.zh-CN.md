@@ -205,7 +205,7 @@ curl -X POST http://localhost:18888/api/fetch \
 curl "http://localhost:18888/api/capture?url=https://example.com&pattern=api"
 
 # Storage API — 读取指定域名的 Cookie / localStorage / sessionStorage
-curl "http://localhost:18888/api/storage?domain=example.com"
+curl "http://localhost:18888/api/storage?domain=baidu.com"
 ```
 
 **核心优势：** 在你的真实浏览器上下文中执行，自动携带 Cookie 和登录态。

@@ -56,8 +56,10 @@ export function getDaemonPath(): string {
  * - If pid dead, deletes stale daemon.json and spawns new daemon
  * - Checks health via GET /status
  * - If not running, spawns daemon process (detached) and waits for health
+ * 
+ * @param customCdpUrl - 可选的自定义 CDP URL，例如 http://localhost:9222
  */
-export async function ensureDaemon(): Promise<void> {
+export async function ensureDaemon(customCdpUrl?: string): Promise<void> {
   if (daemonReady && cachedInfo) {
     // Quick re-check: is it still alive and CDP connected?
     try {
@@ -96,15 +98,34 @@ export async function ensureDaemon(): Promise<void> {
     }
   }
 
-  // Discover CDP port (auto-launches Chrome if needed)
-  const cdpInfo = await discoverCdpPort();
+  // Discover CDP port (auto-launches Chrome if needed) or use custom URL
+  let cdpInfo;
+  if (customCdpUrl) {
+    // 解析用户提供的 CDP URL
+    try {
+      const url = new URL(customCdpUrl);
+      cdpInfo = {
+        host: url.hostname,
+        port: parseInt(url.port) || 9222,
+      };
+    } catch (error) {
+      throw new Error(
+        `bb-browser: Invalid CDP URL: ${customCdpUrl}\n\n` +
+        "Expected format: http://localhost:9222 or http://127.0.0.1:9222"
+      );
+    }
+  } else {
+    cdpInfo = await discoverCdpPort();
+  }
+  
   if (!cdpInfo) {
     throw new Error(
       "bb-browser: Cannot find a Chromium-based browser.\n\n" +
       "Please do one of the following:\n" +
       "  1. Install Google Chrome, Edge, or Brave\n" +
       "  2. Start Chrome with: google-chrome --remote-debugging-port=19825\n" +
-      "  3. Set BB_BROWSER_CDP_URL=http://host:port",
+      "  3. Set BB_BROWSER_CDP_URL=http://host:port\n" +
+      "  4. Use: bb-browser-api daemon start --cdp-url http://localhost:9222",
     );
   }
 
