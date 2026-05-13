@@ -1,0 +1,57 @@
+# 源代码（只发布构建后的 dist）
+packages/
+src/
+*.ts
+!*.d.ts
+tsconfig*.json
+
+# 开发工具配置
+.husky/
+.github/
+.turbo/
+.vscode/
+.idea/
+
+# 测试和文档
+test/
+tests/
+*.test.js
+*.spec.js
+coverage/
+
+# 构建工具
+turbo.json
+tsup.config.ts
+.eslintrc*
+.prettierrc*
+
+# Docker 相关
+docker/
+Dockerfile
+docker-compose*.yml
+
+# 开发文档（保留 README 和 LICENSE）
+DEVELOPMENT.md
+DEPLOY.md
+DEBUG_*.md
+AGENTS.md
+API_*.md
+CHANGELOG_*.md
+CREDENTIALS_*.md
+DEPLOYMENT_*.md
+*.zh-CN.md
+
+# 其他
+.git/
+.gitignore
+.gitattributes
+.dockerignore
+*.log
+*.tgz
+*.zip
+node_modules/
+.env*
+clip.json
+*.sh
+bin/
+scripts/

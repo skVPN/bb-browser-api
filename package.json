@@ -1,12 +1,12 @@
 {
-  "name": "bb-browser",
+  "name": "bb-browser-api",
   "version": "0.11.5",
-  "description": "Your browser is the API. CLI + MCP server for AI agents to control Chrome with your login state.",
+  "description": "Your browser is the API. CLI + MCP server for AI agents to control Chrome with your login state. Fork with HTTP API endpoints.",
   "type": "module",
   "bin": {
-    "bb-browser": "./dist/cli.js",
-    "bb-browser-mcp": "./dist/mcp.js",
-    "bb-browser-provider": "./dist/provider.js"
+    "bb-browser-api": "./dist/cli.js",
+    "bb-browser-api-mcp": "./dist/mcp.js",
+    "bb-browser-api-provider": "./dist/provider.js"
   },
   "main": "./dist/cli.js",
   "files": [
@@ -23,7 +23,12 @@
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules dist",
     "prepare": "husky",
-    "prepublishOnly": "pnpm build:release"
+    "prepublishOnly": "pnpm build:release",
+    "prepack": "node scripts/pre-publish-check.js",
+    "publish:check": "node scripts/pre-publish-check.js",
+    "publish:patch": "bash scripts/publish.sh patch",
+    "publish:minor": "bash scripts/publish.sh minor",
+    "publish:major": "bash scripts/publish.sh major"
   },
   "keywords": [
     "browser",
@@ -42,12 +47,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/epiral/bb-browser.git"
+    "url": "git+https://github.com/skVPN/bb-browser-api.git"
   },
   "bugs": {
-    "url": "https://github.com/epiral/bb-browser/issues"
+    "url": "https://github.com/skVPN/bb-browser-api/issues"
   },
-  "homepage": "https://github.com/epiral/bb-browser#readme",
+  "homepage": "https://github.com/skVPN/bb-browser-api#readme",
   "engines": {
     "node": ">=18.0.0"
   },

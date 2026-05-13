@@ -1,12 +1,12 @@
 <div align="center">
 
-# bb-browser
+# bb-browser-api
 
-### BadBoy Browser
+### BadBoy Browser API
 
 **Your browser is the API. No keys. No bots. No scrapers.**
 
-[![npm](https://img.shields.io/npm/v/bb-browser?color=CB3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/bb-browser)
+[![npm](https://img.shields.io/npm/v/bb-browser-api?color=CB3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/bb-browser-api)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -16,18 +16,20 @@
 
 ---
 
-> **Fork Note (skVPN/bb-browser-api):** This fork adds three new HTTP API endpoints to the daemon and changes the default port to **18888**. See [What's Changed in This Fork](#whats-changed-in-this-fork) for details.
+> **Fork Note (skVPN/bb-browser-api):** This fork adds three new HTTP API endpoints to the daemon and changes the default port to **18888**. Install with `npm install -g bb-browser-api`. See [What's Changed in This Fork](#whats-changed-in-this-fork) for details.
+>
+> **Original Project:** [epiral/bb-browser](https://github.com/epiral/bb-browser)
 
 ---
 
 You're already logged into Twitter, Reddit, YouTube, Zhihu, Bilibili, LinkedIn, GitHub — bb-browser lets AI agents **use that directly**.
 
 ```bash
-bb-browser site twitter/search "AI agent"       # search tweets
-bb-browser site zhihu/hot                        # trending on Zhihu
-bb-browser site arxiv/search "transformer"       # search papers
-bb-browser site eastmoney/stock "茅台"            # real-time stock quote
-bb-browser site boss/search "AI engineer"        # search jobs
+bb-browser-api site twitter/search "AI agent"       # search tweets
+bb-browser-api site zhihu/hot                        # trending on Zhihu
+bb-browser-api site arxiv/search "transformer"       # search papers
+bb-browser-api site eastmoney/stock "茅台"            # real-time stock quote
+bb-browser-api site boss/search "AI engineer"        # search jobs
 bb-browser site wikipedia/summary "Python"       # Wikipedia summary
 bb-browser site youtube/transcript VIDEO_ID      # full transcript
 bb-browser site stackoverflow/search "async"     # search SO questions
@@ -53,24 +55,24 @@ bb-browser flips this: **instead of forcing websites to provide machine interfac
 ### Install
 
 ```bash
-npm install -g bb-browser
+npm install -g bb-browser-api
 ```
 
 ### Use
 
 ```bash
-bb-browser site update        # pull community adapters
-bb-browser site recommend     # see which adapters match your browsing habits
-bb-browser site zhihu/hot     # go
+bb-browser-api site update        # pull community adapters
+bb-browser-api site recommend     # see which adapters match your browsing habits
+bb-browser-api site zhihu/hot     # go
 ```
 
 ### OpenClaw (no extension needed)
 
-If you use [OpenClaw](https://openclaw.ai), bb-browser runs directly through OpenClaw's built-in browser — no Chrome extension or daemon required:
+If you use [OpenClaw](https://openclaw.ai), bb-browser-api runs directly through OpenClaw's built-in browser — no Chrome extension or daemon required:
 
 ```bash
-bb-browser site reddit/hot --openclaw
-bb-browser site xueqiu/hot-stock 5 --openclaw --jq '.items[] | {name, changePercent}'
+bb-browser-api site reddit/hot --openclaw
+bb-browser-api site xueqiu/hot-stock 5 --openclaw --jq '.items[] | {name, changePercent}'
 ```
 
 Skill on ClawHub: [bb-browser-openclaw](https://clawhub.ai/yan5xu/bb-browser)
@@ -80,9 +82,9 @@ Skill on ClawHub: [bb-browser-openclaw](https://clawhub.ai/yan5xu/bb-browser)
 ```json
 {
   "mcpServers": {
-    "bb-browser": {
+    "bb-browser-api": {
       "command": "npx",
-      "args": ["-y", "bb-browser", "--mcp"]
+      "args": ["-y", "bb-browser-api", "--mcp"]
     }
   }
 }
@@ -147,24 +149,24 @@ Six platforms, six dimensions, structured JSON. Faster and broader than any huma
 ## Also a full browser automation tool
 
 ```bash
-bb-browser open https://example.com
-bb-browser snapshot -i                # accessibility tree
-bb-browser click @3                   # click element
-bb-browser fill @5 "hello"            # fill input
-bb-browser eval "document.title"      # run JS
-bb-browser fetch URL --json           # authenticated fetch
-bb-browser network requests --with-body --json  # capture traffic
-bb-browser screenshot                 # take screenshot
+bb-browser-api open https://example.com
+bb-browser-api snapshot -i                # accessibility tree
+bb-browser-api click @3                   # click element
+bb-browser-api fill @5 "hello"            # fill input
+bb-browser-api eval "document.title"      # run JS
+bb-browser-api fetch URL --json           # authenticated fetch
+bb-browser-api network requests --with-body --json  # capture traffic
+bb-browser-api screenshot                 # take screenshot
 ```
 
 All commands support `--json` output, `--jq <expr>` for inline filtering, and `--tab <id>` for concurrent multi-tab operations.
 
 ```bash
-bb-browser site xueqiu/hot-stock 5 --jq '.items[] | {name, changePercent}'
+bb-browser-api site xueqiu/hot-stock 5 --jq '.items[] | {name, changePercent}'
 # {"name":"云天化","changePercent":"2.08%"}
 # {"name":"东吴股份","changePercent":"-7.60%"}
 
-bb-browser site info xueqiu/stock   # view adapter args, example, domain
+bb-browser-api site info xueqiu/stock   # view adapter args, example, domain
 ```
 
 ## HTTP API for programmatic access
@@ -173,7 +175,7 @@ The daemon exposes an HTTP API for direct integration. **Default port: `18888`**
 
 ```bash
 # Start daemon
-bb-browser daemon start
+bb-browser-api daemon start
 
 # Fetch API — execute a request inside the browser context
 curl -X POST http://localhost:18888/api/fetch \
@@ -227,8 +229,8 @@ print(result['body'])
 The daemon binds to `127.0.0.1:18888` by default. You can customize the host with `--host`:
 
 ```bash
-bb-browser daemon --host 127.0.0.1    # IPv4 only (fix macOS IPv6 issues)
-bb-browser daemon --host 0.0.0.0      # listen on all interfaces (for Tailscale / ZeroTier remote access)
+bb-browser-api daemon --host 127.0.0.1    # IPv4 only (fix macOS IPv6 issues)
+bb-browser-api daemon --host 0.0.0.0      # listen on all interfaces (for Tailscale / ZeroTier remote access)
 ```
 
 ## Architecture
