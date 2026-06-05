@@ -104,10 +104,12 @@ export async function ensureDaemon(customCdpUrl?: string): Promise<void> {
     // 解析用户提供的 CDP URL
     try {
       const url = new URL(customCdpUrl);
+      const port = url.port ? parseInt(url.port, 10) : 9222;
       cdpInfo = {
         host: url.hostname,
-        port: parseInt(url.port) || 9222,
+        port: port,
       };
+      console.log(`[bb-browser] Using custom CDP URL: ${customCdpUrl}`);
     } catch (error) {
       throw new Error(
         `bb-browser: Invalid CDP URL: ${customCdpUrl}\n\n` +
@@ -115,6 +117,7 @@ export async function ensureDaemon(customCdpUrl?: string): Promise<void> {
       );
     }
   } else {
+    console.log("[bb-browser] Discovering Chrome CDP endpoint...");
     cdpInfo = await discoverCdpPort();
   }
   
@@ -129,8 +132,11 @@ export async function ensureDaemon(customCdpUrl?: string): Promise<void> {
     );
   }
 
+  console.log(`[bb-browser] CDP endpoint found: ${cdpInfo.host}:${cdpInfo.port}`);
+
   // Spawn daemon process with discovered CDP endpoint
   const daemonPath = getDaemonPath();
+  console.log(`[bb-browser] Starting daemon: ${process.execPath} ${daemonPath} --cdp-host ${cdpInfo.host} --cdp-port ${cdpInfo.port}`);
   const child = spawn(process.execPath, [daemonPath, "--cdp-host", cdpInfo.host, "--cdp-port", String(cdpInfo.port)], {
     detached: true,
     stdio: "ignore",

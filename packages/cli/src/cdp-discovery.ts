@@ -30,6 +30,53 @@ function getArgValue(flag: string): string | undefined {
   return process.argv[index + 1];
 }
 
+/**
+ * 构造启动 bb-browser 受管 Chrome 的命令行参数.
+ * 单一来源, 既给 launchManagedBrowser 用, 也给 daemon start 的"打印命令"逻辑用.
+ */
+export function buildManagedChromeArgs(port: number = DEFAULT_CDP_PORT): string[] {
+  const args = [
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${MANAGED_USER_DATA_DIR}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-sync",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-features=Translate,MediaRouter",
+    "--disable-session-crashed-bubble",
+    "--hide-crash-restore-bubble",
+    "--use-mock-keychain",
+  ];
+
+  // Docker/Linux 环境需要额外的参数
+  if (process.platform === "linux") {
+    args.push(
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    );
+  }
+
+  // 如果有 DISPLAY 环境变量, 说明有图形界面; 否则使用 headless 模式
+  if (process.platform === "linux" && !process.env.DISPLAY) {
+    args.push("--headless=new");
+  }
+
+  args.push("about:blank");
+  return args;
+}
+
+/**
+ * 把可执行路径 + 参数格式化成"可以粘贴回 shell 直接运行"的命令字符串.
+ * 含空格的部分会用双引号包起来.
+ */
+export function formatLaunchCommand(executable: string, args: string[]): string {
+  const quote = (s: string): string => (/\s/.test(s) ? `"${s}"` : s);
+  return [quote(executable), ...args.map(quote)].join(" ");
+}
+
 async function tryOpenClaw(): Promise<{ host: string; port: number } | null> {
   try {
     const raw = await execFileAsync("npx", ["openclaw", "browser", "status", "--json"], 30000);
@@ -99,16 +146,42 @@ export function findBrowserExecutable(): string | null {
   }
 
   if (process.platform === "linux") {
-    const candidates = ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"];
+    console.log("[bb-browser] Searching for browser executable on Linux...");
+    
+    // 优先检查常见的绝对路径（Docker 容器中更可靠）
+    const commonPaths = [
+      "/usr/bin/chromium",           // Debian/Ubuntu chromium 包
+      "/usr/bin/google-chrome",      // Google Chrome 官方包
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/chromium-browser",   // 旧版 Ubuntu
+      "/snap/bin/chromium",          // Snap 安装
+      "/usr/local/bin/google-chrome",
+    ];
+    
+    for (const candidatePath of commonPaths) {
+      if (existsSync(candidatePath)) {
+        console.log(`[bb-browser] Found browser at: ${candidatePath}`);
+        return candidatePath;
+      }
+    }
+    
+    console.log("[bb-browser] No browser found in common paths, trying 'which' command...");
+    
+    // 如果绝对路径都找不到，尝试使用 which 命令
+    const candidates = ["chromium", "google-chrome", "google-chrome-stable", "chromium-browser"];
     for (const candidate of candidates) {
       try {
         const resolved = execSync(`which ${candidate}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-        if (resolved) {
+        if (resolved && existsSync(resolved)) {
+          console.log(`[bb-browser] Found browser via 'which ${candidate}': ${resolved}`);
           return resolved;
         }
       } catch {
+        // which 命令失败，继续尝试下一个
       }
     }
+    
+    console.log("[bb-browser] No browser executable found");
     return null;
   }
 
@@ -166,20 +239,10 @@ export async function launchManagedBrowser(port: number = DEFAULT_CDP_PORT): Pro
     }
   } catch {}
 
-  const args = [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${MANAGED_USER_DATA_DIR}`,
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-sync",
-    "--disable-background-networking",
-    "--disable-component-update",
-    "--disable-features=Translate,MediaRouter",
-    "--disable-session-crashed-bubble",
-    "--hide-crash-restore-bubble",
-    "--use-mock-keychain",
-    "about:blank",
-  ];
+  const args = buildManagedChromeArgs(port);
+
+  // 显示启动命令（用于调试）
+  console.log(`[bb-browser] Launching Chrome: ${formatLaunchCommand(executable, args)}`);
 
   try {
     const child = spawn(executable, args, {
@@ -187,14 +250,15 @@ export async function launchManagedBrowser(port: number = DEFAULT_CDP_PORT): Pro
       stdio: "ignore",
     });
     child.unref();
-  } catch {
+  } catch (err) {
+    console.error(`[bb-browser] Failed to launch Chrome: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 
   await mkdir(MANAGED_BROWSER_DIR, { recursive: true });
   await writeFile(MANAGED_PORT_FILE, String(port), "utf8");
 
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + 15000;  // 容器中 Chrome 启动较慢，等待 15 秒
   while (Date.now() < deadline) {
     if (await canConnect("127.0.0.1", port)) {
       return { host: "127.0.0.1", port };

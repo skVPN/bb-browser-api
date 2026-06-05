@@ -77,6 +77,8 @@ bb-browser - AI Agent 浏览器自动化工具
   screenshot [path]            截图
   eval "<js>"                  执行 JavaScript
   fetch <url>                  带登录态的 HTTP 请求
+    --use-domain <hostname>    在指定域名 (例如 example.com) 下找/建 tab 执行 fetch
+                               (规避目标子域是 about:blank / 跳转 / 跨域)
 
 标签页：
   tab [list|new|close|<n>]     管理标签页
@@ -202,6 +204,9 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === "--tab") {
       // --tab 参数及其值，无论出现在命令前后都跳过
       skipNext = true;
+    } else if (arg === "--credentials") {
+      // --credentials 参数及其值，由子命令通过 process.argv 解析
+      skipNext = true;
     } else if (arg === "--since") {
       // --since 参数及其值，无论出现在命令前后都跳过
       skipNext = true;
@@ -210,6 +215,9 @@ function parseArgs(argv: string[]): ParsedArgs {
       skipNext = true;
     } else if (arg === "--status") {
       // --status 参数及其值，由子命令通过 process.argv 解析
+      skipNext = true;
+    } else if (arg === "--use-domain") {
+      // --use-domain <hostname> 必须带值
       skipNext = true;
     } else if (arg.startsWith("-")) {
       // 未知选项，忽略
@@ -442,9 +450,15 @@ async function main(): Promise<void> {
           break;
         }
         if (daemonSubcommand === "start") {
-          // 解析 --cdp-url 参数
+          // 解析 --cdp-url 参数或位置参数
           const cdpUrlIndex = process.argv.findIndex(a => a === "--cdp-url");
-          const cdpUrl = cdpUrlIndex >= 0 ? process.argv[cdpUrlIndex + 1] : undefined;
+          let cdpUrl = cdpUrlIndex >= 0 ? process.argv[cdpUrlIndex + 1] : undefined;
+          
+          // 如果没有 --cdp-url 标志，检查是否有位置参数（第二个参数）
+          if (!cdpUrl && parsed.args[1]) {
+            cdpUrl = parsed.args[1];
+          }
+          
           await startCommand({ json: parsed.flags.json, cdpUrl });
           break;
         }
@@ -637,8 +651,9 @@ async function main(): Promise<void> {
         const fetchUrl = parsed.args[0];
         if (!fetchUrl) {
           console.error("[error] fetch: <url> is required.");
-          console.error("  Usage: bb-browser fetch <url> [--json] [--method POST] [--body '{...}']");
+          console.error("  Usage: bb-browser fetch <url> [--json] [--method POST] [--body '{...}'] [--credentials omit|same-origin|include] [--use-domain <hostname>]");
           console.error("  Example: bb-browser fetch https://www.reddit.com/api/me.json --json");
+          console.error("           bb-browser fetch https://sub.example.com/api --use-domain example.com");
           process.exit(1);
         }
         // 解析 fetch 特有选项
@@ -648,15 +663,24 @@ async function main(): Promise<void> {
         const fetchBody = fetchBodyIdx >= 0 ? process.argv[fetchBodyIdx + 1] : undefined;
         const headersIdx = process.argv.findIndex(a => a === "--headers");
         const fetchHeaders = headersIdx >= 0 ? process.argv[headersIdx + 1] : undefined;
+        const credentialsIdx = process.argv.findIndex(a => a === "--credentials");
+        const fetchCredentials = credentialsIdx >= 0 ? process.argv[credentialsIdx + 1] : undefined;
         const outputIdx = process.argv.findIndex(a => a === "--output");
         const fetchOutput = outputIdx >= 0 ? process.argv[outputIdx + 1] : undefined;
+
+        // --use-domain <hostname> 显式指定 fetch 时使用的 tab 域
+        const udIdx = process.argv.findIndex(a => a === "--use-domain");
+        const useDomain = udIdx >= 0 ? process.argv[udIdx + 1] : undefined;
+
         await fetchCommand(fetchUrl, {
           json: parsed.flags.json,
           method: fetchMethod,
           body: fetchBody,
           headers: fetchHeaders,
+          credentials: fetchCredentials as any,
           output: fetchOutput,
           tabId: globalTabId,
+          useDomain,
         });
         break;
       }

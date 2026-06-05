@@ -1,4 +1,10 @@
 import { ensureDaemon, getDaemonStatus, stopDaemon } from "../daemon-manager.js";
+import {
+  buildManagedChromeArgs,
+  findBrowserExecutable,
+  formatLaunchCommand,
+  isManagedBrowserRunning,
+} from "../cdp-discovery.js";
 
 export interface DaemonOptions {
   json?: boolean;
@@ -27,7 +33,9 @@ export async function statusCommand(
 
   // Human-readable output
   console.log(`Daemon running: ${status.running ? "yes" : "no"}`);
+  console.log(`API:            http://${status.host ?? "0.0.0.0"}:${status.port ?? 18888}`);
   console.log(`CDP connected:  ${status.cdpConnected ? "yes" : "no"}`);
+  console.log(`CDP URL:        ${status.cdpUrl ?? "N/A"}`);
   console.log(`Uptime:         ${formatUptime(status.uptime as number)}`);
   console.log(`Global seq:     ${status.currentSeq ?? "N/A"}`);
 
@@ -62,6 +70,34 @@ export async function statusCommand(
 export async function startCommand(
   options: DaemonOptions = {}
 ): Promise<void> {
+  // 如果指定了 cdpUrl，先停止旧的 daemon 以确保使用新的 CDP URL
+  if (options.cdpUrl) {
+    await stopDaemon();
+  }
+
+  // 在 spawn daemon 之前, 把 "将要启动的 Chrome 命令" 打印出来,
+  // 这样用户能看到具体执行了什么. daemon 是 detached 子进程, 它内部的 stdout
+  // 会被丢弃, 所以这条信息必须在前台进程里打印.
+  if (!options.json) {
+    if (options.cdpUrl) {
+      console.log(`[bb-browser] 将连接已有的 CDP: ${options.cdpUrl}`);
+    } else {
+      const managedRunning = await isManagedBrowserRunning();
+      if (managedRunning) {
+        console.log("[bb-browser] 已检测到 bb-browser 受管 Chrome 在运行, 将复用");
+      } else {
+        const executable = findBrowserExecutable();
+        if (executable) {
+          const args = buildManagedChromeArgs();
+          console.log("[bb-browser] 将启动 Chrome:");
+          console.log(`  ${formatLaunchCommand(executable, args)}`);
+        } else {
+          console.log("[bb-browser] 未找到本地 Chrome, 将尝试使用现有 CDP 端点");
+        }
+      }
+    }
+  }
+
   await ensureDaemon(options.cdpUrl);
   const status = await getDaemonStatus();
   if (options.json) {
@@ -69,7 +105,9 @@ export async function startCommand(
   } else {
     console.log("Daemon started");
     if (status) {
+      console.log(`API:            http://${status.host ?? "0.0.0.0"}:${status.port ?? 18888}`);
       console.log(`CDP connected:  ${status.cdpConnected ? "yes" : "no"}`);
+      console.log(`CDP URL:        ${status.cdpUrl ?? "N/A"}`);
       const tabs = status.tabs as Array<{ shortId: string }> | undefined;
       console.log(`Tabs:           ${tabs?.length ?? 0}`);
     }

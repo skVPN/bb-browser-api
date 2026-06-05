@@ -374,6 +374,20 @@ export const COMMANDS: CommandDef[] = [
       days: z.number().default(30).describe("Number of days to look back"),
     }),
   },
+  {
+    name: "fetch",
+    action: "fetch",
+    description: "Execute a fetch request within the browser context, using its cookies and authentication",
+    category: "network",
+    args: z.object({
+      url: z.string().describe("URL to fetch"),
+      method: z.string().default("GET").describe("HTTP method"),
+      body: z.string().optional().describe("Request body"),
+      headers: z.record(z.string()).optional().describe("Request headers"),
+      credentials: z.enum(["omit", "same-origin", "include"]).default("include").describe("Credentials mode"),
+      tab: z.string().optional().describe("Tab short ID"),
+    }),
+  },
 
   // ---------------------------------------------------------------------------
   // Site

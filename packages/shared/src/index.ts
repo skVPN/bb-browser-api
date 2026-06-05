@@ -44,3 +44,7 @@ export {
   isProcessAlive,
   httpJson,
 } from "./daemon-client.js";
+
+export {
+  isUnderDomain,
+} from "./domain.js";

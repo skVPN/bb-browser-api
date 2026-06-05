@@ -191,6 +191,11 @@ curl "http://localhost:18888/api/capture?url=https://example.com&pattern=api"
 
 # Storage API — read cookies / localStorage / sessionStorage for a domain
 curl "http://localhost:18888/api/storage?domain=example.com"
+
+# Cookies API — set cookies (single / batch / Set-Cookie header string)
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"example.com","name":"session","value":"abc","path":"/","secure":true}'
 ```
 
 **Key advantage:** Executes in your real browser context with cookies and login state automatically included.
@@ -291,8 +296,33 @@ POST http://localhost:18888/api/fetch
 | `credentials` | `omit` \| `same-origin` \| `include` | — | Cookie behavior, default `omit` |
 | `body` | string | — | Request body (for POST/PUT) |
 | `tabId` | string \| number | — | Specific tab to use |
+| `useDomain` | string | — | **Only used when `inBrowser=true`.** Run the fetch inside a tab under this hostname, e.g. `"3ue.com"` |
+| `redirect` | `follow` \| `manual` \| `error` | — | Redirect policy, default `follow`. With `manual`, the 3xx response is proxied through verbatim (including `Location`); `error` fails on any redirect |
+| `inBrowser` | boolean | — | If `true`, run the fetch inside a browser tab (legacy behavior) and return a `{status, contentType, body}` JSON envelope. Combine with `useDomain` / `tabId`. `redirect` is ignored in this mode. Default `false` |
 
-**Response:**
+**Response (default — transparent proxy):**
+
+`/api/fetch` proxies the upstream response **as-is**: HTTP status, status text, all response headers (`Set-Cookie`, `Location`, `Content-Type`, ...) and the raw body, with no envelope.
+You get exactly what `curl`-ing the target URL would yield, but with the browser's login state.
+
+```bash
+# Upstream returns JSON -> body is the raw JSON
+curl -X POST http://localhost:18888/api/fetch \
+  -d '{"url":"https://api.example.com/me","credentials":"include"}' \
+  -H "Content-Type: application/json"
+# -> 200, body is {"id":1,"name":"alice"} (no envelope)
+
+# Upstream 302 -> status + Location header proxied through
+curl -i -X POST http://localhost:18888/api/fetch \
+  -d '{"url":"https://example.com/login","redirect":"manual","credentials":"include"}' \
+  -H "Content-Type: application/json"
+# -> HTTP/1.1 302 Found
+# -> location: https://account.example.com/sso?...
+# -> set-cookie: ...
+```
+
+**Response (`inBrowser: true` — legacy JSON envelope):**
+
 ```json
 {
   "status": 200,
@@ -302,6 +332,58 @@ POST http://localhost:18888/api/fetch
 ```
 
 > **Note on `credentials`:** `Sec-Fetch-*` headers are set by the browser automatically and cannot be overridden via JavaScript — this is a browser security requirement. The `credentials` field controls whether cookies are sent.
+
+**When to use `useDomain`?**
+
+> ⚠️ `useDomain` **only applies when `inBrowser: true`** (the default transparent-proxy mode does not need a tab).
+
+When you opt into in-tab fetch (`inBrowser: true`) and the target subdomain redirects to `about:blank` / is unreachable / rejects OPTIONS, the in-page fetch fails with `Failed to fetch (TypeError) from page: about:blank`.
+Workaround: run the fetch inside an already-open tab on a sibling domain.
+
+```bash
+# https://3ue.com is already open in some tab
+# Use inBrowser=true + useDomain to run the fetch in that tab's context
+curl -X POST http://localhost:18888/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://ggg-zh-g--ggg---scriptsem.3ue.com/__static__/webpack/9752.5376bb6d1330b4eb.js",
+    "inBrowser": true,
+    "useDomain": "3ue.com",
+    "credentials": "include"
+  }'
+```
+
+CLI equivalent (the CLI command always runs in-tab):
+
+```bash
+bb-browser-api fetch https://ggg-zh-g--ggg---scriptsem.3ue.com/__static__/webpack/9752.js \
+  --use-domain 3ue.com
+```
+
+**Capturing a 302 redirect without following**
+
+When you need the raw 3xx response (e.g. to read `Location`, trace SSO chains), pass `"redirect": "manual"`:
+
+```bash
+curl -i -X POST http://localhost:18888/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/login-redirect",
+    "redirect": "manual",
+    "credentials": "include"
+  }'
+```
+
+Response (proxied through at the HTTP layer — **no JSON envelope**):
+
+```
+HTTP/1.1 302 Found
+Location: https://account.example.com/sso?next=...
+Set-Cookie: session=abc; Path=/; HttpOnly
+Content-Length: 0
+```
+
+`redirect: "error"` works the same way — when the upstream returns 3xx, the daemon responds with HTTP 502 + an error message (also without a JSON envelope).
 
 ### 3. New HTTP API: `GET /api/capture`
 
@@ -356,7 +438,79 @@ GET http://localhost:18888/api/storage?domain=example.com
 }
 ```
 
-### 5. `credentials` field added to `Request` protocol
+### 5. New HTTP API: `POST /api/cookies`
+
+Set one or more cookies in the browser. Uses CDP `Storage.setCookies` directly,
+so no tab needs to be open at that domain.
+
+**File:** `packages/daemon/src/http-server.ts`
+
+Three input styles are accepted (use whichever is most convenient):
+
+```bash
+# 1) Single cookie
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "example.com",
+    "name": "session",
+    "value": "abc123",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "Lax",
+    "maxAge": 3600
+  }'
+
+# 2) Multiple cookies in one call
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "cookies": [
+      { "name": "a", "value": "1" },
+      { "name": "b", "value": "2", "secure": true }
+    ]
+  }'
+
+# 3) Raw Set-Cookie header strings (one or many)
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "setCookie": "session=abc123; Path=/; Secure; HttpOnly; Max-Age=3600"
+  }'
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | ✅* | Cookie name (required when setting a single cookie) |
+| `value` | string | ✅* | Cookie value |
+| `url` | string | — | Used to derive `domain` if `domain` is omitted |
+| `domain` | string | — | Explicit cookie domain |
+| `useDomain` | string | — | Force-override the cookie domain, e.g. `"example.com"` |
+| `path` | string | — | Cookie path, default `/` |
+| `expires` | number | — | Unix seconds; omit for session cookie |
+| `maxAge` | number | — | Lifetime in seconds (alternative to `expires`) |
+| `secure` | boolean | — | Secure flag |
+| `httpOnly` | boolean | — | HttpOnly flag |
+| `sameSite` | `Strict` \| `Lax` \| `None` | — | SameSite attribute |
+| `cookies` | array | — | Batch form: array of cookie objects |
+| `setCookie` | string \| string[] | — | Raw `Set-Cookie` header string(s) |
+
+> Either `url` or `domain` must be provided (top-level or per-cookie).
+
+**Response:**
+```json
+{
+  "set": 1,
+  "cookies": [
+    { "name": "session", "domain": "example.com", "path": "/", "secure": true, "httpOnly": true, "sameSite": "Lax", "expires": 1893456000 }
+  ]
+}
+```
+
+### 6. `credentials` field added to `Request` protocol
 
 **File:** `packages/shared/src/protocol.ts`
 

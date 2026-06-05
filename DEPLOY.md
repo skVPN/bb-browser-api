@@ -193,6 +193,55 @@ supervisorctl status
 supervisorctl tail -f bb-daemon
 ```
 
+### 问题 5: daemon 启动失败，提示 "Cannot find a Chromium-based browser"
+
+**症状**：
+```
+bb-browser: Cannot find a Chromium-based browser.
+Please do one of the following:
+  1. Install Google Chrome, Edge, or Brave
+  2. Start Chrome with: google-chrome --remote-debugging-port=19825
+  3. Set BB_BROWSER_CDP_URL=http://host:port
+  4. Use: bb-browser-api daemon start --cdp-url http://localhost:9222
+```
+
+**原因**：浏览器检测逻辑未找到已安装的 Chromium
+
+**解决方案**：
+
+1. **运行诊断脚本**（推荐）：
+```bash
+# 进入容器
+docker compose exec bb-browser bash
+
+# 运行诊断
+bash /diagnose-browser.sh
+```
+
+2. **手动检查浏览器**：
+```bash
+# 检查 chromium 是否存在
+which chromium
+ls -lh /usr/bin/chromium
+
+# 检查 CDP 端口是否可访问
+curl http://127.0.0.1:9222/json/version
+```
+
+3. **使用环境变量指定 CDP URL**：
+编辑 `docker-compose.yml`，添加：
+```yaml
+environment:
+  - BB_BROWSER_CDP_URL=http://127.0.0.1:9222
+```
+
+4. **重启服务**：
+```bash
+docker compose restart
+```
+
+**注意**：v0.12.6-1 及以上版本已修复此问题，优先检查 `/usr/bin/chromium` 路径。
+
 ---
 
 ## 性能优化

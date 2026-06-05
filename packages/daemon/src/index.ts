@@ -10,9 +10,7 @@
  */
 
 import { parseArgs } from "node:util";
-import { writeFileSync, unlinkSync, existsSync, readFileSync } from "node:fs";
-import { mkdirSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { writeFileSync, unlinkSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DAEMON_PORT, DAEMON_HOST } from "@bb-browser/shared";
@@ -97,18 +95,12 @@ Endpoints:
     process.exit(0);
   }
 
-  // Auto-generate token if not provided
-  // 本地开发模式：如果绑定到 127.0.0.1，默认不使用 token
-  let token = values.token ?? "";
+  // 默认不使用 token，如需安全认证请通过 --token 参数手动指定
+  const token = values.token ?? "";
   const host = values.host ?? DAEMON_HOST;
-  
-  if (!token && host !== "127.0.0.1" && host !== "localhost") {
-    // 只有在非本地地址时才自动生成 token
-    token = randomBytes(16).toString("hex");
-  }
 
   return {
-    host: values.host ?? DAEMON_HOST,
+    host,
     port: parseInt(values.port ?? String(DAEMON_PORT), 10),
     cdpHost: values["cdp-host"] ?? "127.0.0.1",
     cdpPort: parseInt(values["cdp-port"] ?? String(DEFAULT_CDP_PORT), 10),
@@ -147,44 +139,52 @@ function cleanupDaemonJson(): void {
 // ---------------------------------------------------------------------------
 
 async function discoverCdpPort(host: string, port: number): Promise<{ host: string; port: number }> {
-  // Try connecting to the specified port first
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2000);
+  // 最多等待 15 秒，每 500ms 重试一次（容器中 Chrome 启动较慢）
+  const deadline = Date.now() + 15000;
+  
+  while (Date.now() < deadline) {
+    // Try connecting to the specified port first
     try {
-      const response = await fetch(`http://${host}:${port}/json/version`, {
-        signal: controller.signal,
-      });
-      if (response.ok) {
-        return { host, port };
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {}
-
-  // Try reading managed browser port file
-  const managedPortFile = path.join(DAEMON_DIR, "browser", "cdp-port");
-  try {
-    const rawPort = readFileSync(managedPortFile, "utf8").trim();
-    const managedPort = parseInt(rawPort, 10);
-    if (Number.isInteger(managedPort) && managedPort > 0) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
       try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 2000);
-        try {
-          const response = await fetch(`http://127.0.0.1:${managedPort}/json/version`, {
-            signal: controller.signal,
-          });
-          if (response.ok) {
-            return { host: "127.0.0.1", port: managedPort };
-          }
-        } finally {
-          clearTimeout(timer);
+        const response = await fetch(`http://${host}:${port}/json/version`, {
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          return { host, port };
         }
-      } catch {}
-    }
-  } catch {}
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {}
+
+    // Try reading managed browser port file
+    const managedPortFile = path.join(DAEMON_DIR, "browser", "cdp-port");
+    try {
+      const rawPort = readFileSync(managedPortFile, "utf8").trim();
+      const managedPort = parseInt(rawPort, 10);
+      if (Number.isInteger(managedPort) && managedPort > 0) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2000);
+          try {
+            const response = await fetch(`http://127.0.0.1:${managedPort}/json/version`, {
+              signal: controller.signal,
+            });
+            if (response.ok) {
+              return { host: "127.0.0.1", port: managedPort };
+            }
+          } finally {
+            clearTimeout(timer);
+          }
+        } catch {}
+      }
+    } catch {}
+
+    // 等待 500ms 后重试
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 
   throw new Error(
     `Cannot connect to Chrome CDP at ${host}:${port}. ` +

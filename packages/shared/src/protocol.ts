@@ -120,8 +120,18 @@ export interface Request {
   body?: string;
   /** 请求头（fetch 命令使用） */
   headers?: Record<string, string>;
-  /** fetch credentials 选项（fetch 命令使用，可选值：omit, same-origin, include，默认 omit） */
+  /** fetch credentials 选项（fetch 命令使用，可选值：omit, same-origin, include，默认 include 以使用浏览器的登录态） */
   credentials?: "omit" | "same-origin" | "include";
+  /**
+   * fetch 路由控制 (仅 /api/fetch 路径使用):
+   * 在指定的域名下找一个已存在的 tab 来执行 fetch.
+   * 用于规避 about:blank 或目标子域不可用导致的 "Failed to fetch" 错误.
+   *
+   * 例: fetch 目标 `https://sub-x.3ue.com/api/...`, 传 `useDomain: "3ue.com"`,
+   *     会优先在 3ue.com 域下任意一个已打开的 tab 里执行 fetch,
+   *     没有就在 https://3ue.com 新建一个 tab.
+   */
+  useDomain?: string;
 }
 
 /** 元素引用信息 */

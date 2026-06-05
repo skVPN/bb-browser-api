@@ -784,8 +784,8 @@ export async function dispatchRequest(
         headersExpr = JSON.stringify(request.headers);
       }
       
-      // 使用用户提供的 credentials，默认为 'omit' 以避免浏览器自动添加 CORS 相关的 headers
-      const credentials = request.credentials || 'omit';
+      // 使用用户提供的 credentials，默认为 'include' 以携带浏览器的登录态（Cookie）
+      const credentials = request.credentials || 'include';
       
       const fetchScript = `(async () => {
         try {

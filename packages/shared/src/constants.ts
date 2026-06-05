@@ -6,7 +6,7 @@
 export const DAEMON_PORT = 18888;
 
 /** Daemon 主机地址 */
-export const DAEMON_HOST = "127.0.0.1";
+export const DAEMON_HOST = "0.0.0.0";
 
 /** SSE 心跳间隔（毫秒） - 15秒确保 MV3 Service Worker 不休眠 */
 export const SSE_HEARTBEAT_INTERVAL = 15000; // 15 秒

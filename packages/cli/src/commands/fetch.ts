@@ -12,6 +12,7 @@
  */
 
 import { generateId, type Request, type Response, type TabInfo } from "@bb-browser/shared";
+import { isUnderDomain } from "@bb-browser/shared";
 import { sendCommand } from "../client.js";
 import { ensureDaemonRunning } from "../daemon-manager.js";
 
@@ -20,8 +21,15 @@ export interface FetchOptions {
   method?: string;
   body?: string;
   headers?: string;
+  credentials?: "omit" | "same-origin" | "include";
   output?: string;
   tabId?: string | number;
+  /**
+   * 在指定域名下找/建一个 tab 来执行 fetch.
+   * 用于规避目标子域是 about:blank 或跳转, 导致 "Failed to fetch" 的情况.
+   * 例: --use-domain 3ue.com
+   */
+  useDomain?: string;
 }
 
 /**
@@ -37,28 +45,55 @@ function matchTabOrigin(tabUrl: string, targetHostname: string): boolean {
 }
 
 /**
- * 找到匹配域名的 tab，如果没有则新建
+ * 找到匹配域名的 tab, 如果没有则新建.
+ *
+ * @param origin     目标 origin (用于在没有匹配 tab 时新建)
+ * @param hostname   目标 hostname (用于精确匹配)
+ * @param matchDomain 可选: 匹配范围扩大到这个根域 (例如 "3ue.com").
+ *                    传入时会优先精确 host 匹配, 其次任意 tab 处于 matchDomain 之下.
  */
-async function ensureTabForOrigin(origin: string, hostname: string): Promise<number | undefined> {
+async function ensureTabForOrigin(
+  origin: string,
+  hostname: string,
+  matchDomain?: string,
+): Promise<number | string | undefined> {
   const listReq: Request = { id: generateId(), action: "tab_list" };
   const listResp: Response = await sendCommand(listReq);
 
   if (listResp.success && listResp.data?.tabs) {
-    const matchingTab = listResp.data.tabs.find((tab: TabInfo) =>
-      matchTabOrigin(tab.url, hostname)
-    );
+    const tabs = listResp.data.tabs;
+
+    // 1. 优先精确 host 匹配
+    let matchingTab = tabs.find((tab: TabInfo) => matchTabOrigin(tab.url, hostname));
+
+    // 2. 如果指定了 matchDomain, 退而求其次: 任意处于 matchDomain 下的 tab
+    if (!matchingTab && matchDomain) {
+      matchingTab = tabs.find((tab: TabInfo) => {
+        try {
+          return isUnderDomain(new URL(tab.url).hostname, matchDomain);
+        } catch {
+          return false;
+        }
+      });
+    }
 
     if (matchingTab) {
-      return matchingTab.tabId;
+      return matchingTab.tab ?? matchingTab.tabId;
     }
   }
 
-  const newResp: Response = await sendCommand({ id: generateId(), action: "tab_new", url: origin });
+  // 没有合适的 tab: 在根域名 (或 origin) 下新建一个
+  const navigateTo = matchDomain ? `https://${matchDomain}` : origin;
+  const newResp: Response = await sendCommand({
+    id: generateId(),
+    action: "tab_new",
+    url: navigateTo,
+  });
   if (!newResp.success) {
-    throw new Error(`无法打开 ${origin}: ${newResp.error}`);
+    throw new Error(`无法打开 ${navigateTo}: ${newResp.error}`);
   }
   await new Promise((resolve) => setTimeout(resolve, 3000));
-  return newResp.data?.tabId;
+  return newResp.data?.tab ?? newResp.data?.tabId;
 }
 
 /**
@@ -81,11 +116,13 @@ function buildFetchScript(url: string, options: FetchOptions): string {
     }
   }
 
+  const credentials = options.credentials || "include";
+
   return `(async () => {
     try {
       const resp = await fetch(${JSON.stringify(url)}, {
         method: ${JSON.stringify(method)},
-        credentials: 'include',
+        credentials: ${JSON.stringify(credentials)},
         headers: ${headersExpr}${hasBody ? `,\n        body: ${JSON.stringify(options.body)}` : ""}
       });
       const contentType = resp.headers.get('content-type') || '';
@@ -113,7 +150,7 @@ export async function fetchCommand(
   if (!url) {
     throw new Error(
       "缺少 URL 参数\n" +
-      "  用法: bb-browser fetch <url> [--json] [--method POST] [--body '{...}']\n" +
+      "  用法: bb-browser fetch <url> [--json] [--method POST] [--body '{...}'] [--credentials omit|same-origin|include]\n" +
       "  示例: bb-browser fetch https://www.reddit.com/api/me.json --json"
     );
   }
@@ -134,8 +171,14 @@ export async function fetchCommand(
       throw new Error(`无效的 URL: ${url}`);
     }
 
+    // 计算匹配域: 显式指定的域名
+    let matchDomain: string | undefined;
+    if (typeof options.useDomain === "string" && options.useDomain) {
+      matchDomain = options.useDomain.toLowerCase();
+    }
+
     if (!targetTabId) {
-      targetTabId = await ensureTabForOrigin(origin, hostname);
+      targetTabId = await ensureTabForOrigin(origin, hostname, matchDomain);
     }
   }
 

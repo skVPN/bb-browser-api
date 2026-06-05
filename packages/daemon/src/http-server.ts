@@ -13,7 +13,7 @@
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Request } from "@bb-browser/shared";
-import { COMMAND_TIMEOUT, DAEMON_PORT } from "@bb-browser/shared";
+import { COMMAND_TIMEOUT, DAEMON_PORT, isUnderDomain } from "@bb-browser/shared";
 import { CdpConnection } from "./cdp-connection.js";
 import { dispatchRequest } from "./command-dispatch.js";
 
@@ -114,6 +114,8 @@ export class HttpServer {
       this.handleApiCapture(req, res);
     } else if (req.method === "GET" && url.startsWith("/api/storage")) {
       this.handleApiStorage(req, res);
+    } else if (req.method === "POST" && url === "/api/cookies") {
+      this.handleApiSetCookies(req, res);
     } else if (req.method === "GET" && url === "/status") {
       this.handleStatus(req, res);
     } else if (req.method === "POST" && url === "/shutdown") {
@@ -205,6 +207,28 @@ export class HttpServer {
         headers?: Record<string, string>;
         credentials?: "omit" | "same-origin" | "include";
         tabId?: string | number;
+        /**
+         * 仅在 inBrowser 模式下生效: 在指定域名下找/建一个 tab 来发请求.
+         * 用于规避 about:blank / 跨域子域问题.
+         */
+        useDomain?: string;
+        /**
+         * 重定向处理 (默认 "follow"):
+         *   "follow"  - 跟随到最终响应 (浏览器默认行为)
+         *   "manual"  - 不跟随; 把 3xx 响应原样透传 (含 Location header).
+         *               这种模式必须走 daemon 端 fetch (浏览器规范不允许 JS 拿到 opaque-redirect).
+         *   "error"   - 遇到重定向直接报错; 同样会自动降级到 daemon 端 fetch.
+         */
+        redirect?: "follow" | "manual" | "error";
+        /**
+         * 强制选择请求路径:
+         *   undefined / true (默认) - 在浏览器 tab 内执行 fetch (真实 Chrome stack, 反爬识别低,
+         *                             SameSite/Service Worker 都正常)
+         *   false                   - 在 daemon 端用 Node fetch + 浏览器 Cookie 执行
+         *
+         * 注意: redirect=manual / "error" 会自动强制 false (浏览器规范限制).
+         */
+        inBrowser?: boolean;
       };
 
       if (!params.url) {
@@ -215,7 +239,7 @@ export class HttpServer {
         return;
       }
 
-      // 等待 CDP 连接就绪
+      // 等待 CDP 连接就绪 (两条路径都需要 CDP, 一条拿 cookie, 一条 attach tab)
       if (!this.cdp.connected) {
         try {
           await Promise.race([
@@ -236,48 +260,102 @@ export class HttpServer {
         }
       }
 
-      // 构建 fetch 请求
-      // 如果没有指定 tabId，尝试为目标 URL 找到或创建一个同源的 tab
-      let targetTabId = params.tabId;
-      
+      // ---------------------------------------------------------------------
+      // 路径选择:
+      //   1. redirect=manual/error 或 inBrowser=false -> 强制 daemon 端 Node fetch
+      //   2. 否则: 有对应域名 tab -> 浏览器内 fetch; 没有 -> daemon 端 Node fetch
+      //
+      // 设计理念: 已打开的 tab 说明用户曾访问过该站点, 浏览器内 fetch 是最真实的
+      // (Chrome TLS/UA/Sec-Fetch-*/SameSite/Service Worker 全真).
+      // 没有打开的 tab 时不自动新建 (避免意外导航), 退而用 daemon 端 fetch + Cookie 拷贝.
+      // ---------------------------------------------------------------------
+      const redirect = params.redirect ?? "follow";
+      const browserCannotHandle = redirect === "manual" || redirect === "error";
+      const forceDaemon = params.inBrowser === false || browserCannotHandle;
+
+      if (forceDaemon) {
+        await this.proxyNodeFetchWithBrowserCookies(res, {
+          url: params.url,
+          method: params.method ?? "GET",
+          headers: params.headers,
+          body: params.body,
+          credentials: params.credentials ?? "include",
+          redirect,
+        });
+        return;
+      }
+
+      // ---------------------------------------------------------------------
+      // 尝试在已打开的同域 tab 内执行 fetch.
+      // 如果没有找到合适的 tab, 降级到 daemon 端 Node fetch.
+      // ---------------------------------------------------------------------
+
+      // 解析目标 URL 用于选择 tab
+      let targetTabId: string | number | undefined = params.tabId;
+
       if (!targetTabId && params.url) {
         try {
           const targetUrl = new URL(params.url);
           const targetOrigin = targetUrl.origin;
-          
-          // 查找是否有同源的 tab
-          const targets = (await this.cdp.getTargets()).filter((t) => t.type === "page");
-          const sameOriginTab = targets.find((t) => {
-            try {
-              const tabUrl = new URL(t.url);
-              return tabUrl.origin === targetOrigin;
-            } catch {
-              return false;
-            }
-          });
-          
-          if (sameOriginTab) {
-            // 使用同源的 tab
-            const tabState = this.cdp.tabManager.getTab(sameOriginTab.id);
-            targetTabId = tabState?.shortId || sameOriginTab.id;
-          } else {
-            // 创建一个新的 tab 并导航到目标域名
-            const newTabResp = await this.cdp.browserCommand<{ targetId: string }>(
-              "Target.createTarget",
-              { url: targetOrigin, background: true },
-            );
-            await this.cdp.attachAndEnable(newTabResp.targetId);
-            const newTab = this.cdp.tabManager.getTab(newTabResp.targetId);
-            targetTabId = newTab?.shortId || newTabResp.targetId;
-            
-            // 等待页面加载
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+          const targetHost = targetUrl.hostname;
+
+          // 计算 tab 的域名匹配规则:
+          //   useDomain = "host.com" => 显式指定的字符串
+          //   未提供                 => 完全 origin 匹配
+          let matchDomain: string | null = null;
+          if (typeof params.useDomain === "string" && params.useDomain) {
+            matchDomain = params.useDomain.toLowerCase();
           }
-        } catch (e) {
-          // 如果解析 URL 失败，使用默认逻辑
+
+          const targets = (await this.cdp.getTargets()).filter((t) => t.type === "page");
+
+          let chosenTab: { id: string; url: string } | undefined;
+
+          if (matchDomain) {
+            // 在 matchDomain 范围内挑一个: 优先精确 host 匹配, 其次任意处于 matchDomain 之下
+            chosenTab = targets.find((t) => {
+              try { return new URL(t.url).hostname === targetHost; } catch { return false; }
+            });
+            if (!chosenTab) {
+              chosenTab = targets.find((t) => {
+                try { return isUnderDomain(new URL(t.url).hostname, matchDomain!); } catch { return false; }
+              });
+            }
+          } else {
+            // 默认: 完全 origin 匹配
+            chosenTab = targets.find((t) => {
+              try { return new URL(t.url).origin === targetOrigin; } catch { return false; }
+            });
+            // 退而求其次: 同 hostname (origin 可能 http vs https 不一致)
+            if (!chosenTab) {
+              chosenTab = targets.find((t) => {
+                try { return new URL(t.url).hostname === targetHost; } catch { return false; }
+              });
+            }
+          }
+
+          if (chosenTab) {
+            const tabState = this.cdp.tabManager.getTab(chosenTab.id);
+            targetTabId = tabState?.shortId || chosenTab.id;
+          }
+        } catch {
+          // URL 解析失败, targetTabId 保持 undefined
         }
       }
-      
+
+      // 没有找到合适的 tab -> 降级到 daemon 端 Node fetch
+      if (!targetTabId) {
+        await this.proxyNodeFetchWithBrowserCookies(res, {
+          url: params.url,
+          method: params.method ?? "GET",
+          headers: params.headers,
+          body: params.body,
+          credentials: params.credentials ?? "include",
+          redirect,
+        });
+        return;
+      }
+
       const request: Request = {
         id: `fetch-${Date.now()}`,
         action: "fetch",
@@ -285,7 +363,7 @@ export class HttpServer {
         method: params.method,
         body: params.body,
         headers: params.headers,
-        credentials: params.credentials,
+        credentials: params.credentials || "include",
         tabId: targetTabId,
       };
 
@@ -301,15 +379,37 @@ export class HttpServer {
       if (!response.success) {
         this.sendJson(res, 500, {
           error: response.error,
-          hint: "Fetch 执行失败",
+          hint: "Fetch 执行失败 (浏览器内)",
         });
         return;
       }
 
-      // 返回 fetch 响应
-      this.sendJson(res, 200, response.data?.fetchResponse ?? {
-        error: "No fetch response data",
-      });
+      // 把浏览器 fetch 返回的 { status, contentType, body } 透传成真正的 HTTP 响应.
+      // 不再返回 JSON 信封.
+      const fr = response.data?.fetchResponse;
+      if (!fr) {
+        this.sendJson(res, 500, { error: "No fetch response data" });
+        return;
+      }
+
+      const status = fr.status && fr.status > 0 ? fr.status : 200;
+      const contentType = fr.contentType || "application/octet-stream";
+      res.setHeader("content-type", contentType);
+
+      // body 可能是 string / object (浏览器 fetch handler 对 JSON 做了解析)
+      let bodyBuf: Buffer;
+      if (typeof fr.body === "string") {
+        bodyBuf = Buffer.from(fr.body, "utf-8");
+      } else if (fr.body === undefined || fr.body === null) {
+        bodyBuf = Buffer.alloc(0);
+      } else {
+        // 之前被解析成对象的 JSON, 这里 stringify 回去保持原意
+        bodyBuf = Buffer.from(JSON.stringify(fr.body), "utf-8");
+      }
+
+      res.setHeader("content-length", bodyBuf.length);
+      res.writeHead(status);
+      res.end(bodyBuf);
     } catch (error) {
       this.sendJson(res, 400, {
         error: error instanceof Error ? error.message : "Invalid request",
@@ -601,6 +701,293 @@ export class HttpServer {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /api/cookies
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 设置 Cookie (单个或批量).
+   *
+   * 请求体 (3 种风格, 任选其一):
+   *
+   * 1) 单个 cookie 对象:
+   * {
+   *   "url": "https://example.com",       // 用于推导 domain (与 domain 二选一)
+   *   "domain": "example.com",            // 显式指定 domain (与 url 二选一, 优先 domain)
+   *   "useDomain": "example.com",         // 可选, 强制覆盖 domain (例如目标 sub.example.com 改设到 example.com)
+   *   "name": "session",
+   *   "value": "abc123",
+   *   "path": "/",                        // 可选, 默认 "/"
+   *   "expires": 1893456000,              // 可选, Unix 秒, 不传则为 session cookie
+   *   "maxAge": 3600,                     // 可选, 与 expires 二选一
+   *   "httpOnly": false,
+   *   "secure": true,
+   *   "sameSite": "Lax"                   // "Strict" | "Lax" | "None"
+   * }
+   *
+   * 2) 数组形式 (一次写多个):
+   * { "url": "https://example.com", "cookies": [ {name, value, ...}, ... ] }
+   *
+   * 3) Set-Cookie 头字符串:
+   * { "url": "https://example.com", "setCookie": "session=abc123; Path=/; Secure; HttpOnly" }
+   * { "url": "https://example.com", "setCookie": ["a=1; Path=/", "b=2; Path=/"] }
+   *
+   * 响应:
+   *   200 { "set": 2, "cookies": [ ... ] }
+   *   400 { "error": "...", "hint": "..." }
+   */
+  private async handleApiSetCookies(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const raw = await this.readBody(req);
+      const params = JSON.parse(raw) as SetCookiesRequest;
+
+      // 等待 CDP
+      if (!this.cdp.connected) {
+        try {
+          await Promise.race([
+            this.cdp.waitUntilReady(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("CDP connection timeout")), COMMAND_TIMEOUT),
+            ),
+          ]);
+        } catch {
+          this.sendJson(res, 503, {
+            error: `Chrome not connected (CDP at ${this.cdp.host}:${this.cdp.port})`,
+            reason: this.cdp.lastError || "unknown",
+            hint: "Make sure Chrome is running.",
+          });
+          return;
+        }
+      }
+
+      // 推导默认 domain / url
+      const defaultUrl = params.url;
+      let defaultDomain = params.domain;
+      if (!defaultDomain && defaultUrl) {
+        try {
+          defaultDomain = new URL(defaultUrl).hostname;
+        } catch {}
+      }
+      if (typeof params.useDomain === "string" && params.useDomain) {
+        defaultDomain = params.useDomain.toLowerCase();
+      }
+
+      // 收集所有要设置的 cookie
+      const cookies: CdpCookieParam[] = [];
+
+      // 1) 单条对象 (在顶层带 name+value)
+      if (params.name && params.value !== undefined) {
+        const c = buildCookieFromObject(params, defaultUrl, defaultDomain);
+        if (c.error) {
+          this.sendJson(res, 400, c.error);
+          return;
+        }
+        cookies.push(c.cookie);
+      }
+
+      // 2) cookies 数组
+      if (Array.isArray(params.cookies)) {
+        for (const item of params.cookies) {
+          const c = buildCookieFromObject(
+            { ...item, useDomain: item.useDomain ?? params.useDomain },
+            item.url ?? defaultUrl,
+            item.domain ?? defaultDomain,
+          );
+          if (c.error) {
+            this.sendJson(res, 400, c.error);
+            return;
+          }
+          cookies.push(c.cookie);
+        }
+      }
+
+      // 3) setCookie 字符串 (单个或数组)
+      const setCookieRaw = params.setCookie;
+      const setCookieList: string[] = Array.isArray(setCookieRaw)
+        ? setCookieRaw
+        : typeof setCookieRaw === "string"
+          ? [setCookieRaw]
+          : [];
+      for (const headerStr of setCookieList) {
+        const parsed = parseSetCookieHeader(headerStr, defaultUrl, defaultDomain);
+        if (parsed.error) {
+          this.sendJson(res, 400, parsed.error);
+          return;
+        }
+        cookies.push(parsed.cookie);
+      }
+
+      if (cookies.length === 0) {
+        this.sendJson(res, 400, {
+          error: "Missing cookie data",
+          hint: "请求体应包含 name+value, 或 cookies 数组, 或 setCookie 字符串",
+        });
+        return;
+      }
+
+      // 调用 CDP 写入
+      await this.cdp.browserCommand("Storage.setCookies", { cookies });
+
+      // 响应
+      this.sendJson(res, 200, {
+        set: cookies.length,
+        cookies: cookies.map((c) => ({
+          name: c.name,
+          domain: c.domain,
+          path: c.path,
+          secure: c.secure,
+          httpOnly: c.httpOnly,
+          sameSite: c.sameSite,
+          expires: c.expires,
+        })),
+      });
+    } catch (error) {
+      this.sendJson(res, 400, {
+        error: error instanceof Error ? error.message : "Invalid request",
+        hint: "请求格式错误或执行失败",
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helper: Node-side fetch with browser cookies — 完整透传响应
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 在 daemon 端用 Node fetch 执行请求, Cookie 从浏览器拷贝过来.
+   * 然后把目标响应**原样**透传给调用方 (status / statusText / headers / body 全部),
+   * 不包 JSON 信封.
+   *
+   * 这是 /api/fetch 的默认路径, 调用方就像在直接访问目标 URL, 但带浏览器登录态.
+   */
+  private async proxyNodeFetchWithBrowserCookies(
+    res: ServerResponse,
+    args: {
+      url: string;
+      method: string;
+      headers?: Record<string, string>;
+      body?: string;
+      credentials: "omit" | "same-origin" | "include";
+      redirect: "follow" | "manual" | "error";
+    },
+  ): Promise<void> {
+    // 收集 Cookie (除非 credentials=omit)
+    let cookieHeader: string | undefined;
+    if (args.credentials !== "omit") {
+      try {
+        // Storage.getCookies 是 browser-level 命令, 可以直接指定 urls 拿 cookie,
+        // 不需要 attach 到任何 page target.
+        // 注意: Network.getCookies 是 session-level (需要 target), 这里不能用.
+        const result = await this.cdp.browserCommand<{
+          cookies: Array<{ name: string; value: string }>;
+        }>("Storage.getCookies", { browserContextId: undefined });
+        
+        // 手动过滤匹配目标 URL 域名的 cookie
+        const targetUrl = new URL(args.url);
+        const targetHost = targetUrl.hostname;
+        
+        const matchingCookies = result.cookies.filter((c: any) => {
+          const cookieDomain = (c.domain || "").replace(/^\./, "");
+          return targetHost === cookieDomain || targetHost.endsWith("." + cookieDomain);
+        });
+        
+        if (matchingCookies.length > 0) {
+          cookieHeader = matchingCookies.map((c) => `${c.name}=${c.value}`).join("; ");
+        }
+      } catch {
+        // 如果 Storage.getCookies 失败, 尝试 fallback 到 Network.getAllCookies (也是 browser-level)
+        try {
+          const result = await this.cdp.browserCommand<{
+            cookies: Array<{ name: string; value: string; domain: string }>;
+          }>("Network.getAllCookies", {});
+          
+          const targetUrl = new URL(args.url);
+          const targetHost = targetUrl.hostname;
+          
+          const matchingCookies = result.cookies.filter((c) => {
+            const cookieDomain = (c.domain || "").replace(/^\./, "");
+            return targetHost === cookieDomain || targetHost.endsWith("." + cookieDomain);
+          });
+          
+          if (matchingCookies.length > 0) {
+            cookieHeader = matchingCookies.map((c) => `${c.name}=${c.value}`).join("; ");
+          }
+        } catch {
+          // 都拿不到就不带 cookie
+        }
+      }
+    }
+
+    // 构造请求头
+    const headers: Record<string, string> = {
+      ...(args.headers ?? {}),
+    };
+    if (cookieHeader) {
+      headers["cookie"] = cookieHeader;
+    }
+    if (!Object.keys(headers).some((k) => k.toLowerCase() === "user-agent")) {
+      headers["user-agent"] =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    }
+
+    const method = args.method.toUpperCase();
+    const hasBody = args.body !== undefined && method !== "GET" && method !== "HEAD";
+
+    let upstream: globalThis.Response;
+    try {
+      upstream = await fetch(args.url, {
+        method,
+        headers,
+        body: hasBody ? args.body : undefined,
+        redirect: args.redirect,
+      });
+    } catch (e) {
+      this.sendJson(res, 502, {
+        error: e instanceof Error ? e.message : String(e),
+        hint: "Upstream fetch failed (network error)",
+      });
+      return;
+    }
+
+    // 透传响应头. 跳过 hop-by-hop / 会破坏 Node http 响应的头.
+    const skipHeaders = new Set([
+      "transfer-encoding",
+      "connection",
+      "keep-alive",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailers",
+      "upgrade",
+      "content-encoding", // body 已被 Node fetch 解码, 不能再说自己是 gzip
+      "content-length", // 由 Node 重新计算
+    ]);
+    upstream.headers.forEach((value, key) => {
+      if (!skipHeaders.has(key.toLowerCase())) {
+        try {
+          res.setHeader(key, value);
+        } catch {
+          // 个别 header 名/值可能非法, 忽略
+        }
+      }
+    });
+
+    res.writeHead(upstream.status, upstream.statusText || undefined);
+
+    // 透传 body (3xx 通常空, 但仍可能有 HTML)
+    if (upstream.body) {
+      try {
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        res.end(buf);
+      } catch {
+        res.end();
+      }
+    } else {
+      res.end();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /status
   // ---------------------------------------------------------------------------
 
@@ -616,7 +1003,10 @@ export class HttpServer {
 
     this.sendJson(res, 200, {
       running: true,
+      host: this.host,
+      port: this.port,
       cdpConnected: this.cdp.connected,
+      cdpUrl: `http://${this.cdp.host}:${this.cdp.port}`,
       uptime: this.uptime,
       currentSeq: this.cdp.tabManager.currentSeq(),
       currentTargetId: this.cdp.currentTargetId,
@@ -659,4 +1049,187 @@ export class HttpServer {
     });
     res.end(body);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Cookie helpers (module-level, used by handleApiSetCookies)
+// ---------------------------------------------------------------------------
+
+type CookieSameSite = "Strict" | "Lax" | "None";
+
+interface CdpCookieParam {
+  name: string;
+  value: string;
+  url?: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: CookieSameSite;
+  expires?: number;
+}
+
+interface CookieInput {
+  name?: string;
+  value?: string;
+  url?: string;
+  domain?: string;
+  path?: string;
+  expires?: number; // Unix seconds
+  maxAge?: number; // 与 expires 二选一
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: string;
+  /** 强制覆盖 domain. 优先级高于 url 推导和 domain 字段. */
+  useDomain?: string;
+}
+
+interface SetCookiesRequest extends CookieInput {
+  cookies?: CookieInput[];
+  setCookie?: string | string[];
+}
+
+interface BuildResult {
+  cookie: CdpCookieParam;
+  error?: undefined;
+}
+interface BuildError {
+  cookie?: undefined;
+  error: { error: string; hint?: string };
+}
+
+/**
+ * 把一个 CookieInput 对象转成 CDP `Storage.setCookies` 接受的格式.
+ */
+function buildCookieFromObject(
+  input: CookieInput,
+  defaultUrl?: string,
+  defaultDomain?: string,
+): BuildResult | BuildError {
+  if (!input.name) {
+    return { error: { error: "Cookie missing 'name'", hint: "每个 cookie 必须有 name 字段" } };
+  }
+  if (input.value === undefined || input.value === null) {
+    return {
+      error: {
+        error: `Cookie '${input.name}' missing 'value'`,
+        hint: "每个 cookie 必须有 value 字段 (空字符串可接受)",
+      },
+    };
+  }
+
+  const cookie: CdpCookieParam = {
+    name: input.name,
+    value: String(input.value),
+    path: input.path ?? "/",
+  };
+
+  if (input.url ?? defaultUrl) cookie.url = input.url ?? defaultUrl;
+  const domain = input.domain ?? defaultDomain;
+  if (domain) cookie.domain = domain;
+
+  if (!cookie.url && !cookie.domain) {
+    return {
+      error: {
+        error: `Cookie '${input.name}' missing url/domain`,
+        hint: "请在请求顶层提供 url 或 domain, 或在每个 cookie 上单独提供",
+      },
+    };
+  }
+
+  if (typeof input.secure === "boolean") cookie.secure = input.secure;
+  if (typeof input.httpOnly === "boolean") cookie.httpOnly = input.httpOnly;
+  if (input.sameSite) {
+    const ss = normalizeSameSite(input.sameSite);
+    if (ss) cookie.sameSite = ss;
+  }
+
+  // expires / maxAge -> CDP expires (Unix 秒)
+  if (typeof input.expires === "number") {
+    cookie.expires = input.expires;
+  } else if (typeof input.maxAge === "number") {
+    cookie.expires = Math.floor(Date.now() / 1000) + input.maxAge;
+  }
+
+  return { cookie };
+}
+
+/**
+ * 解析 `Set-Cookie` 头风格的字符串.
+ *
+ * 例:
+ *   "session=abc123; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=3600"
+ */
+function parseSetCookieHeader(
+  raw: string,
+  defaultUrl?: string,
+  defaultDomain?: string,
+): BuildResult | BuildError {
+  if (!raw || typeof raw !== "string") {
+    return { error: { error: "Invalid Set-Cookie string", hint: "setCookie 必须是非空字符串" } };
+  }
+
+  const parts = raw.split(";").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return { error: { error: "Empty Set-Cookie string" } };
+  }
+
+  // 第一段: name=value
+  const first = parts[0];
+  const eqIdx = first.indexOf("=");
+  if (eqIdx <= 0) {
+    return { error: { error: `Cannot parse '${first}' as 'name=value'` } };
+  }
+  const name = first.slice(0, eqIdx).trim();
+  const value = first.slice(eqIdx + 1).trim();
+
+  const input: CookieInput = { name, value };
+
+  for (let i = 1; i < parts.length; i++) {
+    const seg = parts[i];
+    const eq = seg.indexOf("=");
+    const key = (eq < 0 ? seg : seg.slice(0, eq)).trim().toLowerCase();
+    const val = eq < 0 ? "" : seg.slice(eq + 1).trim();
+    switch (key) {
+      case "path":
+        input.path = val || "/";
+        break;
+      case "domain":
+        // RFC: 前导点会被浏览器自动忽略, 这里规范化
+        input.domain = val.replace(/^\./, "");
+        break;
+      case "expires": {
+        const ts = Date.parse(val);
+        if (!Number.isNaN(ts)) input.expires = Math.floor(ts / 1000);
+        break;
+      }
+      case "max-age": {
+        const n = Number(val);
+        if (Number.isFinite(n)) input.maxAge = n;
+        break;
+      }
+      case "secure":
+        input.secure = true;
+        break;
+      case "httponly":
+        input.httpOnly = true;
+        break;
+      case "samesite":
+        input.sameSite = val;
+        break;
+      default:
+        // 未知属性忽略
+        break;
+    }
+  }
+
+  return buildCookieFromObject(input, defaultUrl, defaultDomain);
+}
+
+function normalizeSameSite(v: string): CookieSameSite | null {
+  const s = String(v).trim().toLowerCase();
+  if (s === "strict") return "Strict";
+  if (s === "lax") return "Lax";
+  if (s === "none") return "None";
+  return null;
 }

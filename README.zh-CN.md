@@ -206,6 +206,11 @@ curl "http://localhost:18888/api/capture?url=https://example.com&pattern=api"
 
 # Storage API — 读取指定域名的 Cookie / localStorage / sessionStorage
 curl "http://localhost:18888/api/storage?domain=baidu.com"
+
+# Cookies API — 写入 Cookie（单条 / 批量 / Set-Cookie 头字符串）
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"example.com","name":"session","value":"abc","path":"/","secure":true}'
 ```
 
 **核心优势：** 在你的真实浏览器上下文中执行，自动携带 Cookie 和登录态。
@@ -306,8 +311,33 @@ POST http://localhost:18888/api/fetch
 | `credentials` | `omit` \| `same-origin` \| `include` | — | Cookie 发送策略，默认 `omit` |
 | `body` | string | — | 请求体（POST/PUT 时使用） |
 | `tabId` | string \| number | — | 指定使用的标签页 |
+| `useDomain` | string | — | **仅 `inBrowser=true` 时生效**。在指定域名下找/建 tab 来执行 fetch，例如 `"3ue.com"` |
+| `redirect` | `follow` \| `manual` \| `error` | — | 重定向处理，默认 `follow`。`manual` 时把 3xx 响应原样透传（含 `Location` header），不跟随；`error` 时遇到 3xx 直接报错 |
+| `inBrowser` | boolean | — | 是否在浏览器 tab 上下文中执行（旧行为），默认 `false`。设为 `true` 时返回 `{status, contentType, body}` JSON 信封，配合 `useDomain` / `tabId` 选择 tab；`redirect` 在此模式下被忽略 |
 
-**响应：**
+**响应（默认 — 完整透传）：**
+
+`/api/fetch` 默认把上游响应**原样**回写：HTTP status、status text、所有响应头（包括 `Set-Cookie`、`Location`、`Content-Type` 等）和 body 都不加封装。
+你拿到的就像直接 `curl` 目标 URL 一样，但带了浏览器的登录态。
+
+```bash
+# 上游返回 JSON 时, 直接拿到原 JSON
+curl -X POST http://localhost:18888/api/fetch \
+  -d '{"url":"https://api.example.com/me","credentials":"include"}' \
+  -H "Content-Type: application/json"
+# -> 200, body 就是 {"id":1,"name":"alice"} 这种上游原 JSON
+
+# 上游 302 时, 透传 status + Location header
+curl -i -X POST http://localhost:18888/api/fetch \
+  -d '{"url":"https://example.com/login","redirect":"manual","credentials":"include"}' \
+  -H "Content-Type: application/json"
+# -> HTTP/1.1 302 Found
+# -> location: https://account.example.com/sso?...
+# -> set-cookie: ...
+```
+
+**响应（`inBrowser: true` — 旧 JSON 信封）：**
+
 ```json
 {
   "status": 200,
@@ -317,6 +347,58 @@ POST http://localhost:18888/api/fetch
 ```
 
 > **关于 `credentials`：** `Sec-Fetch-*` 等安全 headers 由浏览器自动设置，JavaScript 无法覆盖（这是浏览器安全规范）。`credentials` 字段控制是否发送 Cookie。
+
+**何时使用 `useDomain`？**
+
+> ⚠️ `useDomain` **仅在 `inBrowser: true` 时生效**（默认透传模式不需要 tab）。
+
+当你显式选择浏览器内 fetch（`inBrowser: true`）、且目标子域跳转到 `about:blank` / 不可达 / 拒绝 OPTIONS 时，浏览器会出现 `Failed to fetch (TypeError) from page: about:blank`。
+解决办法：让 fetch 在另一个**已经打开的同根域 tab** 上下文中执行。
+
+```bash
+# 浏览器里打开了 https://3ue.com
+# 走 inBrowser=true + useDomain, fetch 一个会跳转到 about:blank 的子域
+curl -X POST http://localhost:18888/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://ggg-zh-g--ggg---scriptsem.3ue.com/__static__/webpack/9752.5376bb6d1330b4eb.js",
+    "inBrowser": true,
+    "useDomain": "3ue.com",
+    "credentials": "include"
+  }'
+```
+
+CLI 等价（CLI 命令本身就是浏览器内 fetch）：
+
+```bash
+bb-browser-api fetch https://ggg-zh-g--ggg---scriptsem.3ue.com/__static__/webpack/9752.js \
+  --use-domain 3ue.com
+```
+
+**捕获 302 跳转而不跟随**
+
+需要拿到原始 3xx 响应（读 `Location`、跟踪 SSO 跳转链）时，加 `"redirect": "manual"`：
+
+```bash
+curl -i -X POST http://localhost:18888/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/login-redirect",
+    "redirect": "manual",
+    "credentials": "include"
+  }'
+```
+
+返回（HTTP 协议层完整透传，**没有 JSON 信封**）：
+
+```
+HTTP/1.1 302 Found
+Location: https://account.example.com/sso?next=...
+Set-Cookie: session=abc; Path=/; HttpOnly
+Content-Length: 0
+```
+
+`redirect: "error"` 同理 — 遇到 3xx 时 daemon 直接返回 502 + 错误信息（同样不带 JSON 信封）。
 
 ### 3. 新增 HTTP API：`GET /api/capture`
 
@@ -371,7 +453,78 @@ GET http://localhost:18888/api/storage?domain=example.com
 }
 ```
 
-### 5. `Request` 协议新增 `credentials` 字段
+### 5. 新增 HTTP API：`POST /api/cookies`
+
+往浏览器写入一个或多个 Cookie。底层走 CDP `Storage.setCookies`，所以不需要相应域名的 tab 已经打开。
+
+**文件：** `packages/daemon/src/http-server.ts`
+
+请求体支持 3 种风格，任选一种：
+
+```bash
+# 1) 单条
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain": "example.com",
+    "name": "session",
+    "value": "abc123",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "Lax",
+    "maxAge": 3600
+  }'
+
+# 2) 一次写多个
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "cookies": [
+      { "name": "a", "value": "1" },
+      { "name": "b", "value": "2", "secure": true }
+    ]
+  }'
+
+# 3) 直接粘贴 Set-Cookie 头字符串（单个或数组都行）
+curl -X POST http://localhost:18888/api/cookies \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com",
+    "setCookie": "session=abc123; Path=/; Secure; HttpOnly; Max-Age=3600"
+  }'
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | ✅* | Cookie 名（设置单条时必填） |
+| `value` | string | ✅* | Cookie 值 |
+| `url` | string | — | 当 `domain` 缺失时用于推导 |
+| `domain` | string | — | 显式指定 cookie 域 |
+| `useDomain` | string | — | 强制覆盖 cookie 域，例如 `"example.com"` |
+| `path` | string | — | Cookie 路径，默认 `/` |
+| `expires` | number | — | Unix 秒；不传则为 session cookie |
+| `maxAge` | number | — | 生命周期（秒），与 `expires` 二选一 |
+| `secure` | boolean | — | Secure 标记 |
+| `httpOnly` | boolean | — | HttpOnly 标记 |
+| `sameSite` | `Strict` \| `Lax` \| `None` | — | SameSite |
+| `cookies` | array | — | 批量形式：cookie 对象数组 |
+| `setCookie` | string \| string[] | — | 原始 `Set-Cookie` 头字符串 |
+
+> `url` 和 `domain` 必须至少提供一个（顶层或每条 cookie 单独提供）。
+
+**响应：**
+```json
+{
+  "set": 1,
+  "cookies": [
+    { "name": "session", "domain": "example.com", "path": "/", "secure": true, "httpOnly": true, "sameSite": "Lax", "expires": 1893456000 }
+  ]
+}
+```
+
+### 6. `Request` 协议新增 `credentials` 字段
 
 **文件：** `packages/shared/src/protocol.ts`
 
