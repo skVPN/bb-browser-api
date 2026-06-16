@@ -35,8 +35,14 @@ function getArgValue(flag: string): string | undefined {
  * 单一来源, 既给 launchManagedBrowser 用, 也给 daemon start 的"打印命令"逻辑用.
  */
 export function buildManagedChromeArgs(port: number = DEFAULT_CDP_PORT): string[] {
+  // BB_BROWSER_CDP_ADDRESS 可覆盖调试接口绑定地址, 默认 127.0.0.1.
+  // 在 Docker/K8s 中可设为 0.0.0.0 以允许外部连接.
+  // 注意: 0.0.0.0 会暴露 Chrome DevTools, 请确保网络层有访问控制.
+  const cdpAddress = process.env.BB_BROWSER_CDP_ADDRESS ?? "127.0.0.1";
+
   const args = [
     `--remote-debugging-port=${port}`,
+    `--remote-debugging-address=${cdpAddress}`,
     `--user-data-dir=${MANAGED_USER_DATA_DIR}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -212,7 +218,9 @@ export async function isManagedBrowserRunning(): Promise<boolean> {
     if (!Number.isInteger(port) || port <= 0) {
       return false;
     }
-    return await canConnect("127.0.0.1", port);
+    const cdpAddress = process.env.BB_BROWSER_CDP_ADDRESS ?? "127.0.0.1";
+    const connectHost = cdpAddress === "0.0.0.0" ? "127.0.0.1" : cdpAddress;
+    return await canConnect(connectHost, port);
   } catch {
     return false;
   }
@@ -258,10 +266,14 @@ export async function launchManagedBrowser(port: number = DEFAULT_CDP_PORT): Pro
   await mkdir(MANAGED_BROWSER_DIR, { recursive: true });
   await writeFile(MANAGED_PORT_FILE, String(port), "utf8");
 
+  const cdpHost = process.env.BB_BROWSER_CDP_ADDRESS ?? "127.0.0.1";
+  // 如果绑定了 0.0.0.0, 实际连接时用 127.0.0.1 (loopback 始终可达)
+  const connectHost = cdpHost === "0.0.0.0" ? "127.0.0.1" : cdpHost;
+
   const deadline = Date.now() + 15000;  // 容器中 Chrome 启动较慢，等待 15 秒
   while (Date.now() < deadline) {
-    if (await canConnect("127.0.0.1", port)) {
-      return { host: "127.0.0.1", port };
+    if (await canConnect(connectHost, port)) {
+      return { host: connectHost, port };
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }

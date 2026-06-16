@@ -102,6 +102,13 @@ export class CdpConnection {
   /** Resolvers for commands queued before CDP is ready. */
   private readyWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
+  /**
+   * Per-target session event subscribers.
+   * key: `${targetId}::${method}`, value: set of handlers.
+   * Used by screencast and other streaming features.
+   */
+  private sessionEventListeners = new Map<string, Set<(params: JsonObject) => void>>();
+
   constructor(host: string, port: number, tabManager: TabStateManager) {
     this.host = host;
     this.port = port;
@@ -317,10 +324,45 @@ export class CdpConnection {
   // Session event routing (network, console, errors, dialog)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Subscribe to a specific CDP session event for a target.
+   * Returns an unsubscribe function.
+   * Used for streaming features like Page.screencastFrame.
+   */
+  onSessionEvent(
+    targetId: string,
+    method: string,
+    handler: (params: JsonObject) => void,
+  ): () => void {
+    const key = `${targetId}::${method}`;
+    let listeners = this.sessionEventListeners.get(key);
+    if (!listeners) {
+      listeners = new Set();
+      this.sessionEventListeners.set(key, listeners);
+    }
+    listeners.add(handler);
+    return () => {
+      const ls = this.sessionEventListeners.get(key);
+      if (ls) {
+        ls.delete(handler);
+        if (ls.size === 0) this.sessionEventListeners.delete(key);
+      }
+    };
+  }
+
   private async handleSessionEvent(targetId: string, event: JsonObject): Promise<void> {
     const method = event.method;
     const params = (event.params ?? {}) as JsonObject;
     if (typeof method !== "string") return;
+
+    // Dispatch to external subscribers first (e.g. screencast handlers)
+    const key = `${targetId}::${method}`;
+    const listeners = this.sessionEventListeners.get(key);
+    if (listeners && listeners.size > 0) {
+      for (const handler of listeners) {
+        try { handler(params); } catch { /* ignore subscriber errors */ }
+      }
+    }
 
     const tab = this.tabManager.getTab(targetId);
     if (!tab) return;
